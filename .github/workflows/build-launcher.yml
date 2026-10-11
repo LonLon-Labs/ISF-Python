@@ -1,0 +1,60 @@
+# Builds the launcher for every target on a matching machine (PyInstaller can't cross-compile).
+# Run it from the Actions tab ("Run workflow"), or push a tag like v1.0 to also publish a GitHub release.
+name: Build launcher
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: "Windows x86_64",  os: windows-latest,  arch: x86_64, upload: "release/*.exe" }
+          - { label: "Windows ARM64",   os: windows-11-arm,  arch: arm64,  upload: "release/*.exe" }
+          - { label: "macOS Intel",     os: macos-15-intel,  arch: x86_64, upload: "release/*.dmg\nrelease/*.app.zip" }
+          - { label: "macOS Apple Si.", os: macos-15,        arch: arm64,  upload: "release/*.dmg\nrelease/*.app.zip" }
+          # Oldest supported Ubuntu on purpose: an AppImage runs on distros with the same or newer glibc.
+          - { label: "Linux x86_64",    os: ubuntu-22.04,    arch: x86_64, upload: "release/*.AppImage" }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tkinter (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk
+
+      - name: Build
+        shell: bash
+        run: python packaging/build.py --expect-arch ${{ matrix.arch }} --version "${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-${{ runner.os }}-${{ matrix.arch }}
+          path: ${{ matrix.upload }}
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

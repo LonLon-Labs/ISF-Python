@@ -1,0 +1,12 @@
+dirtools - third-party notices
+==============================
+
+dirtools/container.py, dirtools/stream.py and dirtools/lingo_*.py are Python ports of ProjectorRays
+(https://github.com/ProjectorRays/ProjectorRays), which is licensed under the Mozilla Public License 2.0.
+Those files remain covered by MPL-2.0. The full license text is at https://www.mozilla.org/MPL/2.0/
+and belongs next to this file as LICENSE-MPL.txt.
+
+The bitmap, sound and export-layout logic (dirtools/media.py, dirtools/ripper.py) follows the behaviour of
+Director Cast Ripper (https://github.com/n0samu/DirectorCastRipper), which is MIT licensed:
+  Copyright (c) the Director Cast Ripper authors. See that project's LICENSE file for the exact notice.
+No game files are included in this repository.

@@ -1,0 +1,74 @@
+# ============================================================================================
+# I SPY Spooky Mansion Deluxe port -- keep everything that comes FROM the game out of the repo.
+# The repo should hold only the port's own source code; players supply their own copy of the game
+# (the launcher rips it from their disc into %LOCALAPPDATA%\ISpySpookyMansionPort).
+# ============================================================================================
+
+# --- saves & per-user state (saves now live in %LOCALAPPDATA%\ISpySpookyMansionPort\SAVED GAMES) ---
+SAVED GAMES/
+*.LST
+*.VER
+state.json
+state.json.tmp
+logs/
+*.log
+
+# --- data generated from the game's Lingo by tools/convert_data.py (handlers, member tables, text) ---
+data/
+data.partial/
+
+# --- the game's own files and rips of them ---
+exports/
+Exports/
+exports.partial/
+game/
+work/
+*.cxt
+*.cct
+*.dxr
+*.dcr
+*.dir
+*.ls
+*.lasm
+Members.csv
+*.aif
+*.aiff
+*.wav
+*.bik
+*.smk
+*.mov
+
+# --- artwork for the 'Choose an Ending' screen: it is cut from the game's own images (backdrop, title
+#     graphics, button art), so it stays local.  The picker skips itself if this folder is missing. ---
+Version Picker/
+
+# --- third-party tools / binaries ---
+*.exe
+*.dll
+*.x32
+Xtras/
+
+# --- python / editor noise ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
+
+# --- packaging output (packaging/build.py) ---
+release/
+packaging/.work/
+packaging/.cache/
+*.AppImage
+*.dmg
+*.spec

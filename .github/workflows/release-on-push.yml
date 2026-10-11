@@ -1,0 +1,38 @@
+# On every push to a branch: build all launcher targets, then delete the GitHub release named "release"
+# (and its tag) if it exists and create it again with the fresh files.
+name: Release on push
+
+on:
+  push:
+    branches: ["**"]          # branches only; the "release" tag this creates can't re-trigger it
+
+concurrency:
+  group: release-on-push
+  cancel-in-progress: true    # a newer push replaces a build that is still running
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-launcher.yml
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Replace the "release" release
+        run: |
+          ls -l dist
+          gh release delete release --repo "$REPO" --cleanup-tag --yes || true
+          gh api -X DELETE "repos/$REPO/git/refs/tags/release" || true     # in case only the tag was left over
+          gh release create release dist/* --repo "$REPO" --target "$GITHUB_SHA" \
+            --title "release" \
+            --notes "Automatic build of ${GITHUB_SHA::7} (branch ${GITHUB_REF_NAME}). Replaced on every push."
