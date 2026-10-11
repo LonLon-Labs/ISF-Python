@@ -13,6 +13,8 @@ concurrency:
 jobs:
   build:
     uses: ./.github/workflows/build-launcher.yml
+    permissions:
+      contents: write
 
   publish:
     needs: build
