@@ -1,7 +1,7 @@
 """Hand-ported parent scripts, part 6: the room screens.
 
-    ParentScript  50  SCREEN_CREDIT      the credits slide show
-    ParentScript  48  SCREEN_STUDY       the Study (book buttons / window / intro bink)
+    ParentScript  84  SCREEN_CREDIT      the credits slide show   (Fantasy, BHP cast)
+    ParentScript  48  SCREEN_STUDY       the Study (book buttons / window / intro bink)   [Spooky-only, to be removed]
 
 (SCREEN_KITCHEN 49, SCREEN_MM 51, SCREEN_CC 52 and SCREEN_IWORKSHOP 53 follow.)
 Imported at the bottom of rooms.py so `from . import rooms` registers everything.
@@ -15,14 +15,18 @@ from .riddles import call_all
 
 
 # ============================================================================================
-# SCREEN_CREDIT  (ParentScript 50)
+# SCREEN_CREDIT  (Fantasy ParentScript 84)
+#
+# Properties (exactly the .ls `property` line): pType, pAmbientAudio, pSlideSprite, pSlideSet,
+# pSpeed, pLastUpdate, pSavedList, pCurrSlideSet, pCurrSlide, pFinished, pName, pLastMouseDown,
+# pPageSound, pEnabled.  No pAnimObject / pBackground / pBackgroundSprite / pReturnScreen
+# (those were Spooky Mansion's SCREEN_CREDIT, ParentScript 50).
 # ============================================================================================
 
 @lingo_script('SCREEN_CREDIT')
 class ScreenCredit(LObject):
     def __init__(self):
         self.pType = None
-        self.pName = None
         self.pAmbientAudio = 0
         self.pSlideSprite = 0
         self.pSlideSet = []
@@ -32,18 +36,13 @@ class ScreenCredit(LObject):
         self.pCurrSlideSet = 1
         self.pCurrSlide = 1
         self.pFinished = 0
+        self.pName = None
         self.pLastMouseDown = 0
         self.pPageSound = 0
         self.pEnabled = 0
-        self.pReturnScreen = Sym('quit')
-        self.pBackground = 0
-        self.pBackgroundSprite = 0
-        self.pAnimObject = 0
 
     def mInit(self, thePacketInfo, theSpriteAlloc):
         set_properties(thePacketInfo, self)
-        self.pBackgroundSprite = pop_one(theSpriteAlloc)
-        self.pAnimObject = get_object(self.pAnimObject, theSpriteAlloc)
         self.pSlideSprite = pop_one(theSpriteAlloc)
         self.pLastUpdate = 0
         self.pSpeed = 7000
@@ -53,8 +52,7 @@ class ScreenCredit(LObject):
         self.pLastMouseDown = 0
         self.pEnabled = 0
         self.pSavedList = []
-        self.pReturnScreen = Sym('quit')
-        self.pAnimObject.mSetParent(self)
+        return self
 
     def mInitPoolObjects(self):
         pass
@@ -69,41 +67,34 @@ class ScreenCredit(LObject):
         pass
 
     def _slide(self):
+        # pSlideSet[pCurrSlideSet][pCurrSlide]  (Lingo lists are 1-based)
         return self.pSlideSet[self.pCurrSlideSet - 1][self.pCurrSlide - 1]
 
     def mLoad(self):
-        for slides in self.pSlideSet:
-            load_mem(slides)
+        load_mem(self.pSlideSet)                 # loadMem on a (nested) list loads every member
 
     def mLoadList(self, theList):
-        theList.append(self.pBackground)
         theList.append(self.pAmbientAudio)
-        self.pAnimObject.mLoadList(theList)
         theList.append(self.pSlideSet[0][0])
 
-    def mUnload(self):
-        pass
+    def mUnload(self):                           # Lingo: mUnLoad
+        unload_mem(self.pAmbientAudio)
 
     def mShow(self):
-        M.FadeInAmbientSound(self.pAmbientAudio, 0)
-        S(self.pBackgroundSprite).member = self.pBackground
-        S(self.pSlideSprite).ink = 36
-        self.mReset()
         S(self.pSlideSprite).member = self._slide()
         self.pLastUpdate = R().milliseconds()
-        self.pLastMouseDown = R().milliseconds()
+        M.FadeInAmbientSound(self.pAmbientAudio)
         M.addUpdateList(self)
         M.resetCursor()
         self.pEnabled = 1
-        set_behavior(self.pBackgroundSprite, self)
-        self.pAnimObject.mShow()
-        self.pAnimObject.mPlay()
+        set_behavior(self.pSlideSprite, self)
 
     def mouseDown(self):
         if R().milliseconds() > (self.pLastMouseDown + 500):
             if self.pCurrSlideSet < 2:
+                unload_mem(self._slide())
                 self.pCurrSlide = 1
-                self.pCurrSlideSet += 1
+                self.pCurrSlideSet = self.pCurrSlideSet + 1
                 load_mem(self._slide())
                 R().sound.puppet(1, self.pPageSound)
                 S(self.pSlideSprite).member = self._slide()
@@ -113,34 +104,29 @@ class ScreenCredit(LObject):
                 self.mFinish()
 
     def mUpdate(self):
-        now = R().milliseconds()
-        if (now - self.pLastUpdate) >= self.pSpeed:
-            self.pLastUpdate = now
+        if R().milliseconds() > (self.pLastUpdate + self.pSpeed):
             if self.pFinished == 0:
                 if self.pCurrSlide < len(self.pSlideSet[self.pCurrSlideSet - 1]):
-                    self.pCurrSlide += 1
+                    self.pCurrSlide = self.pCurrSlide + 1
                     R().sound.puppet(1, self.pPageSound)
                     S(self.pSlideSprite).member = self._slide()
+                    self.pLastUpdate = R().milliseconds()
                 else:
                     if self.pCurrSlideSet < len(self.pSlideSet):
                         self.pCurrSlide = 1
-                        self.pCurrSlideSet += 1
+                        self.pCurrSlideSet = self.pCurrSlideSet + 1
                         R().sound.puppet(1, self.pPageSound)
                         S(self.pSlideSprite).member = self._slide()
+                        self.pLastUpdate = R().milliseconds()
                     else:
                         self.pFinished = 1
             else:
                 self.mFinish()
 
     def mFinish(self):
-        self.pAnimObject.mKill()
-        remove_behavior(self.pBackgroundSprite, self)
         self.mReset()
         M.removeUpdateList(self)
-        if self.pReturnScreen != Sym('quit'):
-            M.gScreenDaddy.mNavigate(self.pReturnScreen, 1)
-        else:
-            M.doshutDown()
+        M.gScreenDaddy.mNavigate(Sym('MAIN'))
 
     def mReset(self):
         self.pLastUpdate = 0
@@ -154,8 +140,6 @@ class ScreenCredit(LObject):
         M.removeUpdateList(self)
         self.mReset()
         blank(self.pSlideSprite)
-        blank(self.pBackgroundSprite)
-        self.pAnimObject.mHide()
 
     def mPlayLoop(self):
         M.FadeInAmbientSound(self.pAmbientAudio)
@@ -174,24 +158,23 @@ class ScreenCredit(LObject):
         self.pEnabled = 1
         M.addUpdateList(self)
 
-    def mApplicationActivated(self):
-        pass
-
-    def mApplicationDeactivated(self):
-        pass
-
     def mGetType(self):
         return Sym('SCREEN_CREDIT')
 
     def mGetHelpState(self):
         return 0
 
-    def mPlayDone(self, theObject=None):
+    # (not in the .ls: harmless stubs so the ScreenDaddy / movie handlers can call them blindly)
+    def mApplicationActivated(self):
+        pass
+
+    def mApplicationDeactivated(self):
         pass
 
 
 # ============================================================================================
-# SCREEN_STUDY  (ParentScript 48)
+# SCREEN_STUDY  (Spooky ParentScript 48 -- no Fantasy counterpart; delete once Fantasy's data
+# no longer references it)
 # ============================================================================================
 
 @lingo_script('SCREEN_STUDY')

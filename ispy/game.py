@@ -1,15 +1,22 @@
-"""GAME (ParentScript 25), ported 1:1. Replaces the first-draft Game class in core.py.
+"""GameDaddy (ParentScript 29) and GAME (ParentScript 30) of I Spy Fantasy, ported 1:1 from the Lingo.
 
-GAME wraps SCREENDADDY through Lingo's `ancestor`: anything GAME doesn't define (mNavigate, mShow,
-mHide, mGetScreen, ...) is delegated to the SCREENDADDY instance by LObject.__getattr__.
+GameDaddy is the root object (movie.getGameDaddy()): it owns the list of "games" -- the MAIN SCREENDADDY (bump,
+sign-in, main menu, credits) and the three GAME objects #S, #b, #D -- and switches between them (mGoToGame).
+
+GAME wraps a SCREENDADDY through Lingo's `ancestor`: anything GAME doesn't define (mNavigate, mShow, mHide,
+mGetScreen, ...) is delegated to the SCREENDADDY instance by LObject.__getattr__. The ancestor only exists after
+mInitGameObjects (data comes from movie.getGameData(pName, pCurrentVersion)).
+
+Method names follow the Lingo, including the case used in the .ls files where the rest of the port already has
+a convention (the port uses mUnload / mUnload, the Lingo spells mUnLoad).
 """
 from . import runtime, movie as M
 from .runtime import LObject, lingo_script, get_object, get_object_list, destroy_object
 from .lingo import Sym, set_properties, pop_one, random_
-from .stubs import MissingScript
 
 
 def _alive(o):
+    """objectp(o)"""
     return isinstance(o, LObject)
 
 
@@ -18,15 +25,157 @@ def _new(ref, *a):
     return new_script(ref, *a)
 
 
-@lingo_script('GAME')
+# ----------------------------------------------------------------------------------------------
+@lingo_script('GameDaddy')                                # ParentScript 29 (id 131101)
+class GameDaddy(LObject):
+    def __init__(self):
+        self.pGameList = []
+        self.pCurrentGame = 0
+        self.pSavedList = []
+        self.pRiddlePlayed = 0
+        self.pLowEndPrimerAnim = 0
+        self.pLoadWaitTimer = 0
+        self.pLoaderObject = 0
+        self.pTimerScriptNumber = 0
+
+    def mInit(self, data, alloc):
+        set_properties(data, self)
+        # getObjectList(pGameList, theSpriteAlloc, theSpriteAlloc.count): every game gets its own copy of all channels
+        self.pGameList = get_object_list(self.pGameList, alloc, len(alloc))
+        self.pCurrentGame = self.pGameList[0]
+        self.pLowEndPrimerAnim = get_object(self.pLowEndPrimerAnim, [2, 3])
+        if _alive(self.pLowEndPrimerAnim):
+            self.pLowEndPrimerAnim.mSetParent(self)
+        self.pLoadWaitTimer = 0
+        self.pRiddlePlayed = 0
+        self.pSavedList = [Sym('pRiddlePlayed')]
+        M.addObjectGlob(self)
+        return self
+
+    def mDestroy(self): pass
+
+    def mLoad(self): self.pCurrentGame.mLoad()
+    def mUnload(self): self.pCurrentGame.mUnload()
+
+    def mShow(self):
+        if M.isMac():
+            self.pLowEndPrimerAnim.mShow()
+            self.pLowEndPrimerAnim.mPlay()
+        else:
+            # hold the first screen back until the game has been up for 2 s (250 ms if loading took longer)
+            self.pLoadWaitTimer = _new(self.pTimerScriptNumber)
+            since = runtime.rt.milliseconds() - M.gLoadStart
+            if since < 2000:
+                self.pLoadWaitTimer.pTimeOutLength = 2000 - since
+            else:
+                self.pLoadWaitTimer.pTimeOutLength = 250
+            self.pLoadWaitTimer.pParent = self
+            self.pLoadWaitTimer.mPlay()
+
+    def mHide(self): self.pCurrentGame.mHide()
+
+    def mPlayDone(self, obj):
+        if obj is self.pLowEndPrimerAnim:
+            self.pLowEndPrimerAnim.mHide()
+            self.pCurrentGame.mShow()
+        elif obj is self.pLoadWaitTimer:
+            self.pLoadWaitTimer.mKill()
+            self.pCurrentGame.mShow()
+
+    def mGoToGame(self, theGame):
+        daNewGame = self.mGetGame(theGame)
+        if _alive(daNewGame):
+            M.waitCursor()
+            if _alive(self.pCurrentGame):
+                M.clearAmbientSound()
+                self.pCurrentGame.mHide()
+                self.pCurrentGame.mUnload()
+                # (Lingo: unloadMember(); loadCursors() -- Director memory management, nothing to do)
+                self.pCurrentGame.mReleasePoolObjects()
+                if self.pCurrentGame.mGetType() == 'GAME':
+                    self.pCurrentGame.mSave()
+                    self.pCurrentGame.mDestroy()
+            daGameCastExternal = M.changeGameCast(theGame)
+            M.setCurrentGame(daNewGame)
+            self.pCurrentGame = daNewGame
+            if daNewGame.mGetType() == 'GAME':
+                daNewGame.mInitGameObjects()
+            self.pCurrentGame.mInitPoolObjects()
+            daNewGame.mLoad()
+            self.pCurrentGame.mShow()
+            M.changeRiddleCast('EXTERNAL')
+            if not daGameCastExternal:
+                runtime.rt.update_stage()
+                M.changeGameCast('EXTERNAL')
+
+    def mSaveGames(self):
+        for daGame in self.pGameList:
+            if daGame.mGetType() == 'GAME':
+                daGame.mSave()
+
+    def mGetCurrentGame(self): return self.pCurrentGame
+
+    def mGameSolvedCount(self):
+        n = 0
+        for daGame in self.pGameList:
+            if daGame.mGetType() == 'GAME':
+                n += daGame.pIsSolved
+        return n
+
+    def mGetGame(self, theName):
+        for daGame in self.pGameList:
+            if daGame.mGetName() == theName:
+                return daGame
+        return 0
+
+    def mGetSolvedUserNotify(self):
+        for daGame in self.pGameList:
+            if daGame.mGetType() == 'GAME':
+                if daGame.mGetSolvedUserNotify():
+                    return 1
+        return 0
+
+    def mGetType(self): return Sym('GAMEDADDY')
+
+
+# ----------------------------------------------------------------------------------------------
+@lingo_script('GAME')                                     # ParentScript 30
 class Game(LObject):
     def __init__(self):
-        self.ancestor = None
+        # the Lingo `property` list; anything else assigned in a handler is a local variable there
+        self.pName = None
         self.pSaveLoadObject = 0
+        self.pVersionPool = []
+        self.pVersionList = []
+        self.pAllVersionsPlayed = 0
+        self.pCurrentVersion = None
+        self.pSavedList = []
+        self.pIsSolved = 0
+        self.pSpriteAlloc = []
+        self.pHelpButton = 0
+        self.pBackButton = 0
+        self.pHomeButton = 0
+        self.pRiddleStripObject = 0
+        self.pClueStripObject = 0
+        self.pSessionCount = 0
+        self.pWiggleSoundList = []
+        self.pWigglePool = []
+        self.pIntroList = []
+        self.pTokenCollectorList = []
+        self.pCurrentCollectorIndex = 1
+        self.ancestor = 0
+        self.pScavengerHuntManager = 0
+        self.pReminderAudio = 0
+        self.pEndAnim = 0
+        self.pSolvedUserNotified = 0
+        self.pHelpPlayer = 0
+        self.pClueFound = 0
+        self.pShowDSSH = 1
+        self.pHackUsed = 0
+        self.pSaveLoadScriptNumber = 0
 
     # ---- lifecycle ---------------------------------------------------------------------------
     def mInit(self, data, alloc):
-        self.pRiddlePlayed = 0
         self.pShowDSSH = 1
         set_properties(data, self)
         self.pSpriteAlloc = list(alloc)
@@ -40,110 +189,115 @@ class Game(LObject):
         self.pAllVersionsPlayed = 0
         self.pCurrentVersion = pop_one(self.pVersionPool)
         self.pSaveLoadObject = 0
-        object.__setattr__(self, 'ancestor', get_object(self.ancestor, alloc))
-        self.pHelpPlayer = get_object(self.pHelpPlayer, [])
-        if _alive(self.pHelpPlayer):
-            self.pHelpPlayer.mInitPoolObjects()
-            self.pHelpPlayer.mSetParent(self)
+        self.ancestor = 0
         self.pReminderAudio = 0
         self.pHackUsed = 0
-        self.pOpenAnimPlayed = 0
         self.pSavedList = [Sym(n) for n in (
-            'pRiddlePlayed', 'pCurrentVersion', 'pIsSolved', 'pVersionPool', 'pCurrentCollectorIndex',
-            'pSessionCount', 'pAllVersionsPlayed', 'pSolvedUserNotified', 'pClueFound', 'pHackUsed',
-            'pOpenAnimPlayed')]
+            'pCurrentVersion', 'pIsSolved', 'pVersionPool', 'pCurrentCollectorIndex', 'pSessionCount',
+            'pAllVersionsPlayed', 'pSolvedUserNotified', 'pClueFound', 'pHackUsed')]
         M.addObjectGlob(self)
         return self
 
     def mDestroy(self):
-        for scr in list(self.pLevelScreenList or []):
-            lst = self.ancestor.pScreenList
-            if scr in lst:
-                lst.remove(scr)
-                destroy_object(scr)
-        self.pLevelScreenList = []
-        for c in self.pTokenCollectorList or []:
-            destroy_object(c, self)
-        self.pTokenCollectorList = []
-        for attr in ('pRiddleStripObject',):
-            destroy_object(getattr(self, attr), self)
-            setattr(self, attr, 0)
-        if self.pScavengerHuntManager != 0:
-            destroy_object(self.pScavengerHuntManager, self)
-            self.pScavengerHuntManager = 0
-        for attr in ('pHomeButton', 'pBackButton', 'pHelpButton', 'pEndAnim', 'pLipsButton'):
-            destroy_object(getattr(self, attr), self)
-            setattr(self, attr, 0)
-        if _alive(self.pReminderAudio):
-            destroy_object(self.pReminderAudio, self)
-            self.pReminderAudio = 0
-        if _alive(self.pSaveLoadObject):
-            self.pSaveLoadObject.mDestroy()
-            self.pSaveLoadObject = 0
+        if _alive(self.ancestor):
+            self.ancestor.mDestroy()
+            self.ancestor = 0
+            for daCollector in self.pTokenCollectorList or []:
+                destroy_object(daCollector, self)
+            self.pTokenCollectorList = []
+            for daObject in self.pIntroList or []:
+                destroy_object(daObject, self)
+            self.pIntroList = []
+            destroy_object(self.pRiddleStripObject, self)
+            self.pRiddleStripObject = 0
+            destroy_object(self.pClueStripObject, self)
+            self.pClueStripObject = 0
+            if self.pScavengerHuntManager != 0:
+                destroy_object(self.pScavengerHuntManager, self)
+                self.pScavengerHuntManager = 0
+            destroy_object(self.pHomeButton, self)
+            self.pHomeButton = 0
+            destroy_object(self.pBackButton, self)
+            self.pBackButton = 0
+            destroy_object(self.pHelpButton, self)
+            self.pHelpButton = 0
+            destroy_object(self.pEndAnim, self)
+            self.pEndAnim = 0
+            destroy_object(self.pHelpPlayer, self)
+            self.pHelpPlayer = 0
+            if _alive(self.pReminderAudio):
+                destroy_object(self.pReminderAudio, self)
+                self.pReminderAudio = 0
+            if _alive(self.pSaveLoadObject):
+                self.pSaveLoadObject.mDestroy()
+                self.pSaveLoadObject = 0
 
     def mGetType(self): return Sym('GAME')
     def mGetName(self): return self.pName
-    def mGetCurrentVersion(self): return self.pCurrentVersion
-    def mGetSessionCount(self): return self.pSessionCount
-    def mLoadList(self, *a): pass
-    def mLoad(self): self.ancestor.mLoad()
-    def mButtonActivated(self, o): pass
-    def mButtonDeActivated(self, o): pass
 
     def mUnload(self):
-        for attr in ('pHomeButton', 'pBackButton', 'pHelpButton'):
-            if _alive(getattr(self, attr)):
-                getattr(self, attr).mUnload()
+        self.pHomeButton.mUnload()
+        self.pBackButton.mUnload()
+        self.pHelpButton.mUnload()
         if _alive(self.pScavengerHuntManager):
             self.pScavengerHuntManager.mUnload(1)
-        if _alive(self.pRiddleStripObject):
-            self.pRiddleStripObject.mUnload()
-        if _alive(self.ancestor):
-            self.ancestor.mUnload()
+        self.pRiddleStripObject.mUnload()
+        self.pClueStripObject.mUnload()
+        self.ancestor.mUnload()
         if _alive(self.pReminderAudio):
             self.pReminderAudio.mClearSound()
         if _alive(self.pEndAnim):
             self.pEndAnim.mUnload()
 
+    def mLoadList(self, *a): pass
+
+    def mLoad(self):
+        self.pHomeButton.mLoad()
+        self.pBackButton.mLoad()
+        self.pHelpButton.mLoad()
+        self.ancestor.mLoad()
+        if self.mGetLevel() == 2 and self.mRemainingTokenCount():
+            self.pScavengerHuntManager.mLoad()
+
     def mGameInProgress(self):
         if _alive(self.ancestor):
-            return self.ancestor.pScreenList[0].pIntroPlayed
+            daScreen = self.ancestor.pScreenList[0]
+            return daScreen.pIntroPlayed
         return 0
 
-    def mInitGameObjects(self, noRestore=None):
-        stashed = self.ancestor
-        object.__setattr__(self, 'ancestor', None)
-        self.pSaveLoadObject = _new(self.pSaveLoadScriptNumber, M.getPlayerDir(), str(self.pName))
+    def mInitGameObjects(self, *_):
+        daPath = M.getPlayerDir()
+        self.pSaveLoadObject = _new(self.pSaveLoadScriptNumber, daPath, str(self.pName))
         M.setSaveLoadObject(self.pSaveLoadObject)
         if self.pIsSolved:
             self.pSaveLoadObject.mDeleteFile()
             self.mNextVersion()
             self.pIsSolved = 0
             self.pCurrentCollectorIndex = 1
-        self.pSessionCount += 1
-        set_properties(M.getGameData(self.pCurrentVersion), self)
-        alloc = list(self.pSpriteAlloc)
-        self.pLevelScreenList = get_object_list(self.pLevelScreenList, alloc, 100)
-        for scr in self.pLevelScreenList:
-            stashed.pScreenList.append(scr)
-        self.pRiddleStripObject = get_object(self.pRiddleStripObject, alloc)
-        self.pClueStripObject = get_object(self.pClueStripObject, alloc)
-        self.pScavengerHuntManager = get_object(self.pScavengerHuntManager, alloc)
-        if _alive(self.pScavengerHuntManager):
-            self.pScavengerHuntManager.mSetParent(self)
-        for attr in ('pHomeButton', 'pBackButton', 'pHelpButton', 'pLipsButton'):
-            setattr(self, attr, get_object(getattr(self, attr), alloc))
-        for attr in ('pHomeButton', 'pBackButton', 'pHelpButton', 'pLipsButton'):
-            getattr(self, attr).mLoad()
-        self.pHomeButton.mSetParent(self)
-        self.pEndAnim = get_object(self.pEndAnim, alloc)
-        self.pEndAnim.mSetParent(self)
-        self.pReminderAudio = get_object(self.pReminderAudio, alloc)
-        self.pTokenCollectorList = get_object_list(self.pTokenCollectorList, [])
-        self.pWigglePool = list(self.pWiggleSoundList)
-        if noRestore != 1:
-            self.pSaveLoadObject.mRestore()
-        object.__setattr__(self, 'ancestor', stashed)
+        if not _alive(self.ancestor):
+            self.pSessionCount += 1
+            daGameData = M.getGameData(self.pName, self.pCurrentVersion)
+            set_properties(daGameData, self)
+            daAlloc = list(self.pSpriteAlloc)
+            self.ancestor = get_object(self.ancestor, daAlloc)
+            self.pRiddleStripObject = get_object(self.pRiddleStripObject, daAlloc)
+            self.pClueStripObject = get_object(self.pClueStripObject, daAlloc)
+            self.pScavengerHuntManager = get_object(self.pScavengerHuntManager, daAlloc)
+            if _alive(self.pScavengerHuntManager):
+                self.pScavengerHuntManager.mSetParent(self)
+            self.pHomeButton = get_object(self.pHomeButton, daAlloc)
+            self.pBackButton = get_object(self.pBackButton, daAlloc)
+            self.pHelpButton = get_object(self.pHelpButton, daAlloc)
+            self.pHomeButton.mSetParent(self)
+            self.pEndAnim = get_object(self.pEndAnim, daAlloc)
+            self.pEndAnim.mSetParent(self)
+            self.pIntroList = get_object_list(self.pIntroList, daAlloc)
+            self.pReminderAudio = get_object(self.pReminderAudio, daAlloc)
+            self.pTokenCollectorList = get_object_list(self.pTokenCollectorList, [])
+            self.pWigglePool = list(self.pWiggleSoundList)
+            self.pHelpPlayer = get_object(self.pHelpPlayer, [])
+            self.pHelpPlayer.mSetParent(self)
+        self.pSaveLoadObject.mRestore()
 
     def mInitPoolObjects(self):
         self.pHelpPlayer.mInitPoolObjects()
@@ -151,54 +305,53 @@ class Game(LObject):
         self.ancestor.mInitPoolObjects()
 
     def mReleasePoolObjects(self):
-        if _alive(self.pHelpPlayer):
-            self.pHelpPlayer.mReleasePoolObjects()
+        self.pHelpPlayer.mReleasePoolObjects()
         self.mReleaseScavengerHuntPoolObjects()
-        if _alive(self.ancestor):
-            self.ancestor.mReleasePoolObjects()
-
-    def mSetVersion(self, v):
-        """Choose the game version (a / b / c) outright -- used by the 'Choose an Ending' screen. The pool keeps the
-        other two so mNextVersion() still rotates through them afterwards."""
-        v = Sym(str(v).lower())
-        self.pCurrentVersion = v
-        self.pVersionPool = [x for x in self.pVersionList if str(x).lower() != str(v).lower()]
-
-    def _remember_version(self):
-        """Write '<save name>.VER' so the next sign-in loads the game data of this version."""
-        try:
-            from . import version_picker
-            if M.getPlayerDir():
-                version_picker.write_version(M.getPlayerDir(), self.pName, self.pCurrentVersion)
-        except Exception as e:
-            print('[game] could not remember the version:', e)
+        self.ancestor.mReleasePoolObjects()
 
     def mNextVersion(self):
         if self.pVersionPool:
-            self.pCurrentVersion = pop_one(self.pVersionPool)
-            self._remember_version()
+            if not self.pAllVersionsPlayed:
+                self.pCurrentVersion = pop_one(self.pVersionPool)
+            else:
+                idx = random_(len(self.pVersionPool))
+                self.pCurrentVersion = self.pVersionPool.pop(idx - 1)
         else:
+            daOldVersion = self.pCurrentVersion
+            self.pAllVersionsPlayed = 1
             self.pVersionPool = list(self.pVersionList)
+            self.pVersionPool.remove(daOldVersion)
             self.mNextVersion()
+            self.pVersionPool.append(daOldVersion)
 
     # ---- tokens ---------------------------------------------------------------------------------
     def _tc(self):
         return self.pTokenCollectorList[self.pCurrentCollectorIndex - 1]
 
-    def mAddToken(self, t): return self._tc().mAddToken(t)
-    def mREmoveToken(self, t): self._tc().mREmoveToken(t)
+    def mAddToken(self, theToken):
+        daTokenCollector = self._tc()
+        daReturnVal = daTokenCollector.mAddToken(theToken)
+        if daReturnVal and daTokenCollector.mIsComplete():
+            pass                                  # (empty in the Lingo)
+        # (the Lingo handler returns nothing)
+
+    def mREmoveToken(self, theToken): self._tc().mREmoveToken(theToken)
     mRemoveToken = mREmoveToken
-    def mLevelSolved(self): return self._tc().mIsComplete()
-    def mTokenFoundCount(self): return self._tc().mTokenFoundCount()
-    def mRemainingTokenCount(self): return self._tc().mRemainingTokenCount()
-    def mAllTokensFound(self): return self.mRemainingTokenCount() == 0
-    def mTokenFound(self, t): return self._tc().mTokenFound(t)
-    def mNextToken(self): return self._tc().mNextToken()
-    def mGetLevel(self): return self.pCurrentCollectorIndex
-    def mIsSolved(self): return self.pIsSolved
 
     def mNextLevel(self):
-        self.pCurrentCollectorIndex = min(self.pCurrentCollectorIndex + 1, len(self.pTokenCollectorList))
+        if self.pCurrentCollectorIndex == len(self.pTokenCollectorList):
+            self.pIsSolved = 1
+        else:
+            self.pCurrentCollectorIndex += 1
+
+    def mLevelSolved(self): return self._tc().mIsComplete()
+    def mTokenFoundCount(self): return self._tc().mTokenFoundCount()
+    def mAllTokensFound(self): return self._tc().mRemainingTokenCount()     # (sic: the Lingo returns the remaining count)
+    def mRemainingTokenCount(self): return self._tc().mRemainingTokenCount()
+    def mGetLevel(self): return self.pCurrentCollectorIndex
+    def mIsSolved(self): return self.pIsSolved
+    def mTokenFound(self, theToken): return self._tc().mTokenFound(theToken)
+    def mNextToken(self): return self._tc().mNextToken()
 
     def mShowHomeButton(self):
         if self.pIsSolved:
@@ -208,6 +361,12 @@ class Game(LObject):
     def mHideHomeButton(self):
         if self.pIsSolved:
             self.pHomeButton.mHide()
+
+    def mButtonActivated(self, theObject):
+        if theObject is self.pHomeButton:
+            M.gGameDaddy.mGoToGame(Sym('MAIN'))
+
+    def mButtonDeActivated(self, theObject): pass
 
     # ---- scavenger hunt (only active on level 2) -------------------------------------------------------
     def _hunt(self):
@@ -228,24 +387,17 @@ class Game(LObject):
         if self._hunt():
             self.pScavengerHuntManager.mReleasePoolObjects()
 
-    def mLoadScavengerHuntlist(self, lst):
+    def mLoadScavengerHuntlist(self, theList):
         if self._hunt():
             if not self.pScavengerHuntManager.mAllTokensFound():
-                self.pScavengerHuntManager.mLoadList(lst)
+                self.pScavengerHuntManager.mLoadList(theList)
             else:
-                self.pScavengerHuntManager.mLoadFoundTokensList(lst)
-
-    def mEnableScavengerHunt(self):
-        if self._hunt():
-            self.pScavengerHuntManager.mEnable()
-
-    def mDisableScavengerHunt(self):
-        if self._hunt():
-            self.pScavengerHuntManager.mDisable()
+                self.pScavengerHuntManager.mLoadFoundTokensList(theList)
 
     def mUnloadScavengerHunt(self):
-        if self._hunt() and not self.pScavengerHuntManager.mAllTokensFound():
-            self.pScavengerHuntManager.mUnload(1)
+        if self._hunt():
+            if not self.pScavengerHuntManager.mAllTokensFound():
+                self.pScavengerHuntManager.mUnload(1)
 
     def mShowScavengerHunt(self):
         if self._hunt():
@@ -259,75 +411,67 @@ class Game(LObject):
             self.pScavengerHuntManager.mHide()
 
     def mGetCurrentHuntName(self):
-        return self.pScavengerHuntManager.mGetCurrentHuntName() if self._hunt() else 0
-
-    def mSetHuntIndex(self, i):
         if self._hunt():
-            self.pScavengerHuntManager.mSetHuntIndex(i)
+            return self.pScavengerHuntManager.mGetCurrentHuntName()
+        return 0
 
-    def mGetHuntIndex(self):
-        return self.pScavengerHuntManager.mGetHuntIndex() if _alive(self.pScavengerHuntManager) else 0
-
-    def mExternalSHTokenFound(self, _=None):
+    def mExternalSHTokenFound(self, theObject=None):
         if _alive(self.pScavengerHuntManager):
             self.pScavengerHuntManager.mExternalSHTokenFound()
 
     # ---- finale -------------------------------------------------------------------------------
     def mPlayFinale(self):
-        M.clearAmbientSound()
         self.ancestor.pCurrentScreen.mDisable()
         self.pIsSolved = 1
         M.waitCursor()
         self.mLoadFinale()
         self.pEndAnim.mPlay()
 
-    def mPlayDone(self, obj):
-        if obj is self.pEndAnim:
-            cs = self.ancestor.pCurrentScreen
-            cs.mUnload()
-            cs.mHide()
-            cs.mReleasePoolObjects()
-            self.ancestor.pCurrentScreen = 0
-            if self.pCurrentVersion != Sym('c'):
-                self.mDestroy()
-                self.mInitGameObjects(1)
-                self.mSetDisableUpdateMode()
-                self.mNavigate(Sym('MAIN'))
-                M.resetCursor()
+    def mPlayDone(self, theObject):
+        if theObject is self.pEndAnim:
+            rt = runtime.rt
+            anc = self.ancestor
+            newScreen = anc.pScreenList[0]
+            anc.pCurrentScreen.mHide()
+            rt.blank_sprite_range(1, 150)
+            if newScreen is not anc.pCurrentScreen:
+                anc.pCurrentScreen.mUnload()
+                anc.pCurrentScreen.mReleasePoolObjects()
+                anc.pPreviousScreen = anc.pCurrentScreen
+                anc.pCurrentScreen = newScreen
+                M.setCurScreen(anc.pCurrentScreen)
+                newScreen.mInitPoolObjects()
             else:
-                self.pOpenAnimPlayed = 0
-                self.mSetCreditReturn(Sym('quit'))
-                self.mSetDisableUpdateMode()
-                self.mNavigate(Sym('credit'))
+                anc.pPreviousScreen = 0
+            newScreen.mShow()
+            M.resetCursor()
 
     def _master(self):
         return self.ancestor.pScreenList[0]
 
     def mLoadFinale(self):
         if _alive(self.pEndAnim):
-            m = self._master()
-            if self.ancestor.pCurrentScreen is not m and str(m.mGetType()).upper() == 'SCREEN_MASTER':
-                m.mLoadFinale()
+            daMasterScreen = self._master()
+            if self.ancestor.pCurrentScreen is not daMasterScreen:
+                if daMasterScreen.mGetType() == 'SCREEN_MASTER':
+                    daMasterScreen.mLoadFinale()
             self.pEndAnim.mLoad()
 
-    def mLoadFinaleList(self, lst):
+    def mLoadFinaleList(self, theList):
         if _alive(self.pEndAnim):
-            m = self._master()
-            if self.ancestor.pCurrentScreen is not m and str(m.mGetType()).upper() == 'SCREEN_MASTER':
-                m.mLoadFinaleList(lst)
-            self.pEndAnim.mLoadList(lst)
+            daMasterScreen = self._master()
+            if self.ancestor.pCurrentScreen is not daMasterScreen:
+                if daMasterScreen.mGetType() == 'SCREEN_MASTER':
+                    daMasterScreen.mLoadFinaleList(theList)
+            self.pEndAnim.mLoadList(theList)
 
     def mUnloadFinale(self):
         if _alive(self.pEndAnim):
-            m = self._master()
-            if self.ancestor.pCurrentScreen is not m and str(m.mGetType()).upper() == 'SCREEN_MASTER':
-                m.mUnloadFinale()
+            daMasterScreen = self._master()
+            if self.ancestor.pCurrentScreen is not daMasterScreen:
+                if daMasterScreen.mGetType() == 'SCREEN_MASTER':
+                    daMasterScreen.mUnloadFinale()
             self.pEndAnim.mUnload()
-
-    def mSetCreditReturn(self, screen):
-        c = self.ancestor.mGetScreen(Sym('credit'))
-        if _alive(c):
-            c.pReturnScreen = screen
 
     # ---- misc ---------------------------------------------------------------------------------
     def mSave(self):
@@ -346,29 +490,37 @@ class Game(LObject):
         if _alive(self.pReminderAudio):
             self.pReminderAudio.mClearSound()
 
+    def mGetIntro(self):
+        if not self.pAllVersionsPlayed:
+            daPos = self.pVersionList.index(self.pCurrentVersion) + 1
+            return self.pIntroList[daPos - 1]
+        return self.pIntroList[0]
+
     def mGetWiggleSound(self):
-        n = len(self.pWigglePool)
-        if not n:
-            return 0
-        idx = random_(n)
-        snd = self.pWigglePool.pop(idx - 1)
-        if n == 1:
-            self.pWigglePool = list(self.pWiggleSoundList)
-            if snd in self.pWigglePool:
-                self.pWigglePool.remove(snd)
-        return snd
+        wigCount = len(self.pWigglePool)
+        if wigCount:
+            sndIdx = random_(wigCount)
+            sndid = self.pWigglePool.pop(sndIdx - 1)
+            if wigCount == 1:
+                self.pWigglePool = list(self.pWiggleSoundList)
+                if sndid in self.pWigglePool:
+                    self.pWigglePool.remove(sndid)
+            return sndid
+        return 0
 
     def mDisable(self):
-        if _alive(self.ancestor.pCurrentScreen):
+        if _alive(self.ancestor):
             self.ancestor.pCurrentScreen.mDisable()
-        self.mDisableScavengerHunt()
+        if _alive(self.pScavengerHuntManager):
+            self.pScavengerHuntManager.mDisable()
         if _alive(self.pReminderAudio):
             self.pReminderAudio.mDisable()
 
     def mEnable(self):
         if _alive(self.ancestor):
             self.ancestor.pCurrentScreen.mEnable()
-        self.mEnableScavengerHunt()
+        if _alive(self.pScavengerHuntManager):
+            self.pScavengerHuntManager.mEnable()
         if _alive(self.pReminderAudio):
             self.pReminderAudio.mEnable()
 
@@ -377,33 +529,26 @@ class Game(LObject):
             self.pSolvedUserNotified = 1
             return 1
 
+    def mGetCurrentVersion(self): return self.pCurrentVersion
+
     def mGetClueFound(self):
         self.pClueFound = max(self.pClueFound, self.mTokenFoundCount())
         return self.pClueFound
 
-    def _riddles(self):
-        for scr in self.ancestor.pScreenList:
-            anc = scr.__dict__.get('ancestor')
-            if isinstance(anc, dict):
-                continue                     # unported ancestor, not a translated screen
-            if anc is not None:
-                scr = anc
-            if str(scr.mGetType()).upper() == 'SCREEN_RIDDLE':
-                yield scr
-
-    def mAllRiddlesSolved(self):
-        rs = list(self._riddles())
-        return sum(1 for r in rs if r.pSolved) == len(rs)
-
     def mYoungersterCantFindKeys(self):
         return self.mAllRiddlesSolved() and self.mTokenFoundCount() == 0
 
-    def mGetSolvedRiddleCount(self):
-        return sum(1 for r in self._riddles() if r.pSolved)
-
-    def mGetEndRiddleAudio(self):
-        c = min(self.mTokenFoundCount() + 1, len(self.pRewardAudioList))
-        return self.pRewardAudioList[c - 1]
+    def mAllRiddlesSolved(self):
+        daSolvedCount = 0
+        daRiddleCount = 0
+        for daScreen in self.ancestor.pScreenList:
+            anc = daScreen.__dict__.get('ancestor')
+            if isinstance(anc, LObject):          # voidp(getaProp(daScreen, #ancestor)) = false
+                daScreen = anc
+            if daScreen.mGetType() == 'SCREEN_RIDDLE':
+                daRiddleCount += 1
+                daSolvedCount += daScreen.pSolved
+        return daSolvedCount == daRiddleCount
 
     def mShowDynamicStates(self):
         return max(self.mGetLevel() == 1, self.pShowDSSH)

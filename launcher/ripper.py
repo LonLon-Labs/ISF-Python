@@ -4,7 +4,7 @@ This used to run DirectorCastRipper.exe and ProjectorRays.exe. It now calls the 
 so it works the same on Windows, macOS and Linux (x86_64 and ARM) with nothing to download.
 
 Output layout (what tools/convert_data.py and the game read):
-    <exports>/<fileBaseName>/Members.csv, Casts.csv, <num>.png/.wav/.txt
+    <exports>/<fileBaseName>/Members.csv, Casts.csv, <num>.png/.wav/.txt     (ISPYMAIN7, BHP, B, B_AC, D, S, ...)
     <exports>/BHP/casts/External/*.ls
 """
 import os
@@ -21,7 +21,7 @@ NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # What the port reads; used to decide whether ripping really worked.
 REQUIRED_EXPORTS = [
-    "ISPYMAIN8/Members.csv",
+    "ISPYMAIN7/Members.csv",
     "BHP/Members.csv",
 ]
 REQUIRED_SCRIPT_DIR = "BHP/casts/External"      # MovieScript*.ls

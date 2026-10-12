@@ -2,10 +2,10 @@ import os
 import sys
 from pathlib import Path
 
-APP_NAME = "ISpySpookyMansionPort"
+APP_NAME = "ISpyFantasyPort"
 
 # Bump when the pipeline itself changes in a way that invalidates previously generated files.
-STAMP_VERSION = 2
+STAMP_VERSION = 3
 
 
 def default_root():

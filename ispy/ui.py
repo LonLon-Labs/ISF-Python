@@ -202,24 +202,35 @@ class ExternalSound(LObject):
 # animation
 # ============================================================================================
 
-@lingo_script('ANIM_LIN')                                # ParentScript 106
+@lingo_script('ANIM_LIN')                                # Fantasy ParentScript 51
 class AnimLin(LObject):
+    """Fantasy ANIM_LIN, one-to-one from ParentScript 51. pSpeed is data in 1/100 s and Lingo does
+    `pSpeed = pSpeed * 10` (milliseconds per frame); the Spooky class divided 1000 by it. Unlike Spooky,
+    mPlay does not reset pStep (mShow does), there is no pWaitForSound, and pNextUpdate replaces pLastUpdate."""
+
     def __init__(self):
+        self.pName = None
+        self.pType = None
+        self.pAnimSound = 0
+        self.pAnimList = []
         self.pStep = 1
-        self.pLastUpdate = 0
+        self.pInk = 0
+        self.pLoc = Point(0, 0)
+        self.pSprite = 0
+        self.pMember = 0
+        self.pParent = 0
+        self.pNextUpdate = 0
         self.pSpeed = 100
         self.pPlayed = 0
-        self.pAnimList = []
-        self.pAnimSound = 0
-        self.pWaitForSound = 0
-        self.pParent = 0
+        self.pSavedList = []
+        self.pEventTag = None
 
     def mInit(self, data, alloc):
         set_properties(data, self)
         self.pStep = 1
-        self.pLastUpdate = 0
+        self.pNextUpdate = 0
         self.pSprite = pop_one(alloc)
-        self.pSpeed = 1000 // self.pSpeed
+        self.pSpeed = self.pSpeed * 10
         self.pPlayed = 0
         self.pSavedList = [Sym('pPlayed')]
         M.addObjectGlob(self)
@@ -227,39 +238,39 @@ class AnimLin(LObject):
 
     def mDestroy(self): pass
     def mLoad(self): load_mem(self.pMember); load_mem(self.pAnimSound); load_mem(self.pAnimList)
-    def mUnload(self): pass
+    def mUnload(self): pass                              # unloadMem of members: nothing to do in the port
+    mUnLoad = mUnload
     def mGetType(self): return Sym('ANIM_LIN')
     def mGetName(self): return self.pName
     def mSetParent(self, o): self.pParent = o
-    def mSetEventTag(self, t): self.pEventTag = t
+    def mSetEventTag(self, t): self.pEventTag = t        # not in Fantasy 51; kept for callers shared with other classes
     def mGetEventTag(self): return self.pEventTag
     def mKill(self): self.mStop()
 
     def mLoadList(self, lst):
         lst.append(self.pMember)
         lst.append(self.pAnimSound)
-        lst.extend(self.pAnimList)
+        lst.extend(self.pAnimList)                       # appendList
 
     def mPlay(self):
-        self.pStep = 1
         S(self.pSprite).ink = self.pInk
         self.pPlayed += 1
-        if self.pAnimSound:
-            R().sound.puppet(1, self.pAnimSound)
-        S(self.pSprite).member = self.pAnimList[min(self.pStep, len(self.pAnimList)) - 1]
-        self.pLastUpdate = R().milliseconds() - self.pSpeed
+        R().sound.puppet(1, self.pAnimSound)
+        daFrame = min(self.pStep, len(self.pAnimList))
+        S(self.pSprite).member = self.pAnimList[daFrame - 1]
+        self.pNextUpdate = R().milliseconds() + self.pSpeed
         M.addUpdateList(self)
 
     def mStop(self):
         M.removeUpdateList(self)
 
     def mUpdate(self):
-        now = R().milliseconds()
-        if now - self.pLastUpdate >= self.pSpeed:
-            self.pLastUpdate = now
+        if R().milliseconds() > self.pNextUpdate:
             self.pStep += 1
-            if self.pStep <= len(self.pAnimList) or (R().sound.busy(1) and self.pAnimSound and self.pWaitForSound):
-                S(self.pSprite).member = self.pAnimList[min(self.pStep, len(self.pAnimList)) - 1]
+            if self.pStep <= len(self.pAnimList):
+                daIndex = min(self.pStep, len(self.pAnimList))
+                S(self.pSprite).member = self.pAnimList[daIndex - 1]
+                self.pNextUpdate = R().milliseconds() + self.pSpeed
             else:
                 self.mStop()
                 _done(self.pParent, self)
@@ -765,6 +776,17 @@ class Blink(LObject):
     def mOffScreen(self): self.mChangeLoc(M.getOffScreenLoc())
 
 
+# The sign-in text fields (typed name + saved-player list) are centre-aligned inside a field that is
+# SIGNIN_FIELD_W wide.  The list box and the name underline on the SI backdrop are both centred on stage
+# x = SIGNIN_CENTER_X, so the fields are positioned from that centre instead of trusting the data's pLoc.
+SIGNIN_FIELD_W = 295
+SIGNIN_CENTER_X = 366
+
+
+def _signin_field_loc(loc):
+    return Point(SIGNIN_CENTER_X - SIGNIN_FIELD_W // 2, loc[1])
+
+
 def _text_width(f, text):
     rt = R()
     if rt._pg:
@@ -796,10 +818,10 @@ class FieldInput(LObject):
         self.pCursorVisible = 1
         self.pEmpty = 1
         self.pSprite = pop_one(alloc)
-        self.pLoc = get_def(self.pLoc, M.getRegPoint())
+        self.pLoc = _signin_field_loc(get_def(self.pLoc, M.getRegPoint()))
         self.pLocH = self.pLoc[0]
         self.pMember = get_def(self.pMember, 0)
-        self.pwidth = 295
+        self.pwidth = SIGNIN_FIELD_W
         self.pEnabled = 1
         self.pSavedList = []
         return self
@@ -963,7 +985,7 @@ class ListFieldArrows(LObject):
         set_properties(data, self)
         self.pEmpty = 1
         self.pSprite = pop_one(alloc)
-        self.pLoc = get_def(self.pLoc, M.getRegPoint())
+        self.pLoc = _signin_field_loc(get_def(self.pLoc, M.getRegPoint()))
         self.pMember = get_def(self.pMember, 0)
         self.pUpArrow = get_object(self.pUpArrow, alloc)
         self.pDownArrow = get_object(self.pDownArrow, alloc)
@@ -1021,7 +1043,7 @@ class ListFieldArrows(LObject):
         f.scrollTop = 0
         f.lineColors = {}
         f.alignment = 'center'          # list sits centred under the "Pick the Player" title
-        f.width = 295
+        f.width = SIGNIN_FIELD_W
 
     # -- scrolling ----------------------------------------------------------------------------
     def mMaxScroll(self):
@@ -1305,17 +1327,25 @@ class SaveLoad(LObject):
         if os.path.exists(p):
             os.remove(p)
 
+    @staticmethod
+    def _key(o):
+        """Identity of a saved object: class + pName. Restoring by position broke whenever the set of registered
+        objects changed (a stale save put one object's values into another)."""
+        return '%s:%s' % (type(o).__name__, getattr(o, 'pName', ''))
+
     def mSave(self):
         if self.pCurFile == '':
             return
-        buf = [self.pVersion]
+        buf = [self.pVersion, 'keyed-v2']
         for o in self.pObjectGlob:
-            vals = []
+            pairs = []
             for prop in (o.pSavedList or []):
                 v = getattr(o, str(prop), None)
-                # keep None as null so positions stay aligned with pSavedList on restore
-                vals.append(None if (v is None or isinstance(v, LObject)) else _enc(v))
-            buf.append(vals)
+                # objects can't be serialised; None = never set
+                if v is None or isinstance(v, LObject):
+                    continue
+                pairs.append([str(prop), _enc(v)])
+            buf.append([self._key(o), pairs])
         text = json.dumps(buf)
         if text == getattr(self, '_last_saved', None) and os.path.exists(self._path()):
             return                                   # nothing changed since the last save
@@ -1338,23 +1368,35 @@ class SaveLoad(LObject):
         except Exception as e:
             print('[saveload] could not read', p, e)
             return
-        lines = iter(buf[1:])
+        if len(buf) < 2 or buf[1] != 'keyed-v2':
+            print('[saveload] ignoring %s (old save format)' % p)
+            return
+        entries = {}
+        for e in buf[2:]:
+            if isinstance(e, (list, tuple)) and len(e) == 2:
+                entries.setdefault(e[0], []).append(e[1])
         for o in self.pObjectGlob:
-            vals = next(lines, None)
-            if vals is None:
-                break
-            for idx, prop in enumerate(o.pSavedList or []):
-                if idx < len(vals) and vals[idx] is not None:
-                    setattr(o, str(prop), vals[idx])
+            pend = entries.get(self._key(o))
+            if not pend:
+                continue
+            pairs = pend.pop(0)
+            allowed = {str(x) for x in (o.pSavedList or [])}
+            for pair in pairs:
+                if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0] in allowed:
+                    setattr(o, pair[0], pair[1])
 
 
 # ============================================================================================
 # screens
 # ============================================================================================
 
-@lingo_script('SCREEN_BUMP')                             # ParentScript 41
+@lingo_script('SCREEN_BUMP')                             # Fantasy ParentScript 28
 class ScreenBump(LObject):
     def __init__(self):
+        self.pName = None
+        self.pType = None
+        self.pSlideList = []
+        self.pSavedList = []
         self.pcursor = 0
         self.pCurBump = 0
         self.pFlushCount = 0
@@ -1411,22 +1453,42 @@ class ScreenBump(LObject):
             self.pCurBump.mShow()
             self.pCurBump.mPlay()
         else:
+            R().flush_input()                    # flushInputEvents()
             M.navigate(Sym('signin'))
+
+    def mSetPalette(self): pass
+    def mPlayTransSound(self): pass
 
     def mPlayDone(self, bump):
         M.clearInterruptMode()
+        R().update_stage()                       # (set the stageColor to the stageColor; updateStage())
         R().sound.puppet(1, M.gFlushSound)
         self.pFlushCount = 5
         M.addUpdateList(self)
+        R().flush_input()                        # flushInputEvents()
 
     def mCheckKey(self, keycode):
         if keycode == 49 and isinstance(self.pCurBump, LObject):
             self.pCurBump.mStop()
 
 
-@lingo_script('SCREEN_SIGNIN')                           # ParentScript 42
+@lingo_script('SCREEN_SIGNIN')                           # Fantasy ParentScript 39
 class ScreenSignin(LObject):
     def __init__(self):
+        self.pName = None
+        self.pType = None
+        self.pDialogue = 0
+        self.pTimer = 0
+        self.pVOSound = 0
+        self.pSavedList = []
+        self.pIntroPlayed = 0
+        self.pButtList = []
+        self.pSpriteList = []
+        self.pLoadList = []
+        self.pScreenType = None
+        self.pAnimObject = 0
+        self.pIntroAudio = 0
+        self.pRocketSound = 0
         self.pEnabled = 0
         self.pGoing = 0
 
@@ -1461,7 +1523,7 @@ class ScreenSignin(LObject):
 
     def mInitPoolObjects(self):
         self.pRocketSound = M.getSoundObject(1, self.pRocketSound, self)
-        self.pIntroAudio = M.getExSoundObject(2, self.pVOSoundList[0], self)
+        self.pIntroAudio = M.getExSoundObject(2, "SI_NEW.AIF", self)
 
     def mReleasePoolObjects(self):
         self.pRocketSound = M.recycleSoundObject(self.pRocketSound)
@@ -1473,10 +1535,11 @@ class ScreenSignin(LObject):
         call_all(self.pButtList, 'mShow')
         self.pDialogue.mShow()
         if self.pDialogue.mGetListText() != '':
-            self.pIntroAudio.pSound = self.pVOSoundList[random_(3)]
+            self.pIntroAudio.pSound = "SI_WELCOME.AIF"
         M.setInterruptMode(self.pIntroAudio)
         self.pIntroAudio.mPlay()
         M.resetCursor()
+        R().update_stage()
         self.pEnabled = 1
 
     def mDisable(self):
@@ -1493,7 +1556,8 @@ class ScreenSignin(LObject):
         self.pIntroAudio.mKill()
         call_all(self.pButtList, 'mHide')
         self.pDialogue.mHide()
-        self.pTimer.mKill()
+        self.pTimer.mStop()
+        M.removeUpdateList(self.pTimer)
         self.pAnimObject.mHide()
         self.pGoing = 0
         self.pEnabled = 0
@@ -1509,9 +1573,16 @@ class ScreenSignin(LObject):
         call_all(self.pButtList, 'mLoadList', lst)
 
     def mUnload(self):
+        unload_mem(self.pRocketSound)
         self.pAnimObject.mUnload()
         self.pDialogue.mUnload()
         call_all(self.pButtList, 'mUnload')
+
+    def mSimpleButtClicked(self): pass
+    def mPlayTransSound(self): pass
+
+    def mCheckDialogue(self):
+        self.mCheckKey(None)
 
     def mCheckKey(self, keycode):
         if self.pEnabled:
@@ -1541,27 +1612,8 @@ class ScreenSignin(LObject):
         M.waitCursor()
 
     def mFileCommitted(self):
-        from . import version_picker
-        sd = M.gScreenDaddy
         M.setPlayer(self.pDialogue.mGetNameText())
-        pdir = M.getPlayerDir()
-        if version_picker.save_exists(pdir, sd.pName):
-            # returning player: load the game data of the version they were playing (remembered in <save>.VER)
-            v = version_picker.read_version(pdir, sd.pName)
-            if v:
-                sd.mSetVersion(v)
-        else:
-            # new game: 'Choose an Ending' (a = Secret Room, b = Shrinking Soup, c = Ghost Machine)
-            v = version_picker.pick_version(R())
-            if v:                              # None = no picker artwork present: keep the default version
-                sd.mSetVersion(v)
-                version_picker.write_version(pdir, sd.pName, v)
-        M.gScreenDaddy.mInitGameObjects()
-        house_entered = 0
-        door = M.gScreenDaddy.mGetScreen(Sym('DOOR'))
-        if isinstance(door, LObject):
-            house_entered = door.pHouseEntered or 0
-        M.navigate(Sym('MAIN') if house_entered == 0 else Sym('DOOR'))
+        M.navigate(Sym('MAIN'))
 
     def mPlayDone(self, obj):
         if obj is self.pAnimObject:

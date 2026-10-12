@@ -645,7 +645,7 @@ class RiddleWordRect(LObject):
         else:
             S(self.pSprite).ink = 36
             S(self.pSprite).member = self.pCurrentMember
-        S(self.pSprite).cursor = [33, 34]
+        S(self.pSprite).cursor = [22, 23]
         set_behavior(self.pSprite, self)
 
     def mSetSelected(self):
@@ -694,7 +694,7 @@ class RiddleWordRect(LObject):
 
     def mEnable(self):
         self.pEnabled = 1
-        S(self.pSprite).cursor = [33, 34]
+        S(self.pSprite).cursor = [22, 23]
 
     def mSetParent(self, theObject):
         self.pParent = theObject
@@ -744,9 +744,9 @@ class RiddleWord(LObject):
         S(self.pSprite).ink = 32
         S(self.pSprite).blend = 0
         S(self.pSprite).loc = Point(320, 240)
-        S(self.pSprite).member = M.getWordRectBlank()
+        S(self.pSprite).member = 1                            # Fantasy: the blank member (no getWordRectBlank)
         S(self.pSprite).stretch_rect = self.prect             # stretch = 1; rect = prect
-        S(self.pSprite).cursor = [33, 34]
+        S(self.pSprite).cursor = [22, 23]
         set_behavior(self.pSprite, self)
 
     def mSetSelected(self):
@@ -790,7 +790,7 @@ class RiddleWord(LObject):
 
     def mEnable(self):
         self.pEnabled = 1
-        S(self.pSprite).cursor = [33, 34]
+        S(self.pSprite).cursor = [22, 23]
 
     def mSetParent(self, theObject):
         self.pParent = theObject

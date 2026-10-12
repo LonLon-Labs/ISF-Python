@@ -85,7 +85,7 @@ def _selftest():
 
     def _game_modules():
         from ispy import runtime, movie                             # noqa: F401
-        from ispy import core, ui, game, screens, screens2, riddles, rooms, video, hunts  # noqa: F401
+        from ispy import core, ui, game, screens, screens2, riddles, rooms, video, hunts, master_screens  # noqa: F401
         from ispy import media, lingo, version_picker               # noqa: F401
         return "ispy modules import"
 

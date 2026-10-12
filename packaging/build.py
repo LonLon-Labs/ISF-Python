@@ -38,10 +38,10 @@ from pathlib import Path
 
 APP = "ISpyLauncher"
 BUNDLE_ID = "io.github.ispyport.launcher"
-DISPLAY_NAME = "I SPY Spooky Mansion Port"
+DISPLAY_NAME = "I SPY Fantasy Port"
 
-PKG = Path(__file__).resolve().parent            # ispy_port/packaging
-ROOT = PKG.parent                                # ispy_port
+PKG = Path(__file__).resolve().parent            # <repo>/packaging
+ROOT = PKG.parent                                # <repo>
 WORK = PKG / ".work"                             # scratch (git-ignored)
 CACHE = PKG / ".cache"                           # downloaded helpers (git-ignored)
 OUT = ROOT / "release"                           # finished files (git-ignored)
@@ -301,7 +301,7 @@ def build_linux(py, icon, ffmpeg, version, appimagetool):
     shutil.copytree(folder, appdir / "usr" / "bin" / APP, symlinks=True)
     shutil.copy2(icon if icon.suffix == ".png" else WORK / "placeholder-icon.png", appdir / (APP + ".png"))
     (appdir / (APP + ".desktop")).write_text(
-        "[Desktop Entry]\nType=Application\nName=%s\nComment=Setup and launcher for the I SPY Spooky Mansion port\n"
+        "[Desktop Entry]\nType=Application\nName=%s\nComment=Setup and launcher for the I SPY Fantasy port\n"
         "Exec=%s\nIcon=%s\nCategories=Game;\nTerminal=false\n" % (DISPLAY_NAME, APP, APP), encoding="utf-8")
     apprun = appdir / "AppRun"
     apprun.write_text('#!/bin/sh\nHERE="$(dirname "$(readlink -f "$0")")"\nexec "$HERE/usr/bin/%s/%s" "$@"\n' % (APP, APP),

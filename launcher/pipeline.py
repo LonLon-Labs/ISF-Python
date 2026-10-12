@@ -115,7 +115,7 @@ def run_setup(paths, disc_path, rep, cancel=None, ripper_dir=None, log=print):
                 raise LauncherError(
                     "This disc is missing files the port needs.",
                     detail="\n".join(report.errors),
-                    hint="Make sure you chose the I SPY Spooky Mansion Deluxe disc (not another title, "
+                    hint="Make sure you chose the I SPY Fantasy disc (not another title, "
                          "and not an installer-only image).")
             log("Disc OK: " + report.summary())
             fingerprint = report.fingerprint

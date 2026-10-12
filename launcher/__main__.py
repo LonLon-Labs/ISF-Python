@@ -2,11 +2,11 @@
 
     python -m launcher                       # play (runs first-time setup in a window if needed)
     python -m launcher --setup               # force the setup window even if already set up
-    python -m launcher --iso D:\\spooky.iso   # headless setup (console progress), then play
+    python -m launcher --iso D:\\fantasy.iso  # headless setup (console progress), then play
     python -m launcher --iso X --no-launch   # headless setup only
     python -m launcher --paths               # show where generated files live
 
-Run from the ispy_port folder.
+Run from the repo root.
 """
 import argparse
 import sys

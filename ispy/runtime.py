@@ -6,6 +6,7 @@ The original is a Director movie where *everything* is a parent-script object dr
 This module reproduces exactly those two mechanisms on top of pygame so the translated parent
 scripts can stay structurally identical to the Lingo.
 """
+import functools
 import json
 import os
 import time
@@ -20,10 +21,29 @@ REGISTRY = {}          # script name -> python class
 SCRIPT_IDS = {}        # int id (castLib<<16|member) -> script name
 
 
+def _autosave_after(fn):
+    """Wrap a parent script's mPlayDone so that every time it has run, an autosave is requested.
+    Runtime._autosave does the write (debounced to once per 400 ms, and SaveLoad skips it when nothing changed),
+    so progress is kept even if the game is closed or crashes right after a sound / animation / screen finishes."""
+    @functools.wraps(fn)
+    def wrapper(self, *a, **k):
+        try:
+            return fn(self, *a, **k)
+        finally:
+            r = rt
+            if r is not None:
+                r._save_due = True
+    wrapper._autosaves = True
+    return wrapper
+
+
 def lingo_script(name):
     def deco(cls):
         REGISTRY[name.lower()] = cls
         cls.SCRIPT_NAME = name
+        fn = cls.__dict__.get('mPlayDone')          # only a handler the class defines itself (not an inherited one)
+        if fn is not None and not getattr(fn, '_autosaves', False):
+            cls.mPlayDone = _autosave_after(fn)
         return cls
     return deco
 
@@ -109,9 +129,11 @@ class Sprite:
     __slots__ = ('member', '_loc', 'ink', 'blend', 'behaviors', 'visible', 'stretch_rect',
                  '_cursor', 'mask_member')
 
-    # sprite(n).cursor = [25, 26] / [27, 28] / [29, 30] / [31, 32] / [33, 34] / 200 / 0
-    CURSOR_KINDS = {(25, 26): 'arrow', (27, 28): 'hand', (29, 30): 'grab', (31, 32): 'wait',
-                    (33, 34): 'lips'}
+    # sprite(n).cursor = [2, 3] / [8, 9] / [12, 13] / [18, 19] / [20, 21] / [22, 23] / 200 / 0
+    # (the cursor member pairs MAIN_MOVIE's resetCursor / waitCursor / sethandCursor / setOpenhandCursor /
+    #  setGrabCursor / setLipsCursor use in I Spy Fantasy)
+    CURSOR_KINDS = {(2, 3): 'arrow', (8, 9): 'wait', (12, 13): 'hand', (18, 19): 'hand', (20, 21): 'grab',
+                    (22, 23): 'lips'}
 
     # Data like `#pLoc: 0` (the arrow/Go buttons) assigns an integer to `sprite.loc`. Director ignores
     # that and keeps the sprite where it already was (blankSprite parks it at point(320,240)); the
@@ -165,7 +187,8 @@ class Runtime:
         self.t0 = time.monotonic()
         self.last_click = 0
         self.mouse = Point(0, 0)
-        self.current_room = None        # which Exports/<ROOM> folder castLib 3 currently maps to
+        self.current_room = None        # which Exports/<ROOM> folder castLib 4 currently maps to
+        self.current_game_cast = None   # which Exports/<S|D|B> folder castLib 3 currently maps to
         self.screen_daddy = None
         self.cur_screen = None
         self.global_save = None
@@ -190,6 +213,7 @@ class Runtime:
         self.sound = SoundSystem(self)
         self.members_main = {}
         self.handlers = {}
+        self.debug_click = bool(os.environ.get('ISPY_DEBUG_CLICK'))
 
     # -- data ------------------------------------------------------------------------------
     def load_data(self, data_dir):
@@ -226,47 +250,27 @@ class Runtime:
                 o.mUpdate()
 
     # -- members / assets ------------------------------------------------------------------
-    def _old_member_path(self, num, exts=('png',)):
-        """Map a Lingo member number to a ripped file.
-        castLib = num >> 16  (0/1 = ISPYMAIN8 internal, 2 = BHP code, 3 = swapped room cast)."""
-        cast, idx = (num >> 16) or 1, num & 0xFFFF
-        if cast == 1:
-            folder = os.path.join(self.exports_root, 'ISPYMAIN8')
-        elif cast == 3 and self.current_room:
-            folder = os.path.join(self.exports_root, self.current_room.upper())
-        else:
-            return None
-        for e in exts:
-            p = os.path.join(folder, '%d.%s' % (idx, e))
-            if os.path.exists(p):
-                return p
+    # Member numbers are castLib<<16 | n.  castLib 1 = ISPYMAIN7's internal cast (menu art, cursors, 33 sounds),
+    # 2 = BHP (code only), 3 = the current game's cast (changeGameCast: S / D / B),
+    # 4 = the current room / riddle / sign-in cast (changeRiddleCast: SIGNIN, S_AA, D_FI, ...).
+    def _cast_key(self, num):
+        """Which exports folder (upper case) a member number currently refers to, or None for the main cast."""
+        cast = num >> 16
+        if cast == 3:
+            return ('g', self.current_game_cast)
+        if cast == 4:
+            return ('r', self.current_room)
         return None
-
-    def _old_image(self, num):
-        if num in self._img_cache:
-            return self._img_cache[num]
-        img = None
-        p = self.member_path(num, ('png',))
-        if p and self._pg:
-            img = self._pg.image.load(p).convert_alpha()
-        self._img_cache[num] = img
-        return img
-
-    def _old_reg_point(self, num):
-        cast, idx = (num >> 16) or 1, num & 0xFFFF
-        m = self.members_main.get(idx) if cast == 1 else None
-        if m:
-            return tuple(m['reg'])
-        img = self.image(num)
-        return (img.get_width() // 2, img.get_height() // 2) if img else (0, 0)
 
     # Ripped files are named '<n>.<ext>' or '<n>_<name>.<ext>'; each folder also has Members.csv
     # with registration points (which matter: e.g. SI_UA_N has reg (-141, 77)).
     def _folder_for(self, num):
         cast = (num >> 16) or 1
         if cast == 1:
-            return os.path.join(self.exports_root, 'ISPYMAIN8')
-        if cast == 3 and self.current_room:
+            return os.path.join(self.exports_root, 'ISPYMAIN7')
+        if cast == 3 and self.current_game_cast:
+            return os.path.join(self.exports_root, self.current_game_cast.upper())
+        if cast == 4 and self.current_room:
             return os.path.join(self.exports_root, self.current_room.upper())
         return None
 
@@ -314,7 +318,9 @@ class Runtime:
         folders = []
         if self.current_room:
             folders.append(os.path.join(self.exports_root, self.current_room.upper()))
-        folders.append(os.path.join(self.exports_root, 'ISPYMAIN8'))
+        if self.current_game_cast:
+            folders.append(os.path.join(self.exports_root, self.current_game_cast.upper()))
+        folders.append(os.path.join(self.exports_root, 'ISPYMAIN7'))
         for folder in folders:
             idx = self._index(folder)
             for n, nm in idx['name'].items():
@@ -325,12 +331,29 @@ class Runtime:
                             return files[e]
         return None
 
+    def member_number_by_name(self, name):
+        """member("NAME").number -> castLib<<16 | n (castLib 1 is a bare n), searching the main cast, then the game
+        cast (3), then the room cast (4). 0 when there is no such member."""
+        want = str(name).lower()
+        for cast, folder in ((1, os.path.join(self.exports_root, 'ISPYMAIN7')),
+                             (3, os.path.join(self.exports_root, self.current_game_cast.upper())
+                              if self.current_game_cast else None),
+                             (4, os.path.join(self.exports_root, self.current_room.upper())
+                              if self.current_room else None)):
+            if not folder:
+                continue
+            for n, nm in self._index(folder)['name'].items():
+                if nm.lower() == want:
+                    return n if cast == 1 else (cast << 16) | n
+        print('[member] no member named', name, flush=True)
+        return 0
+
     def member_name(self, num):
         folder = self._folder_for(num)
         return self._index(folder)['name'].get(num & 0xFFFF, '') if folder else ''
 
     def image(self, num):
-        key = (self.current_room if (num >> 16) == 3 else None, num)
+        key = (self._cast_key(num), num)
         if key in self._img_cache:
             return self._img_cache[key]
         img = None
@@ -375,11 +398,11 @@ class Runtime:
         if os.name == 'nt':
             try:
                 import ctypes
-                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('ISpySpookyMansionPort.Game')
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('ISpyFantasyPort.Game')
             except Exception:
                 pass
         try:
-            from .icon_data import load_icon_surface      # icon.png (bundled), else read from spooky2.exe
+            from .icon_data import load_icon_surface      # Fantasy.ico from the game folder, else the bundled icon.png
             icon = load_icon_surface(pygame, self.exports_root, self.game_root, self.project_root)
             if icon is not None:
                 pygame.display.set_icon(icon)
@@ -408,9 +431,9 @@ class Runtime:
         except Exception as e:
             print('resizable window unavailable (%s); using a fixed 640x480 window' % e)
             self.screen = pygame.display.set_mode((self.STAGE_W, self.STAGE_H))
-        pygame.display.set_caption('I SPY Spooky Mansion Deluxe (Python Port)')
+        pygame.display.set_caption('I SPY Fantasy (Python Port)')
         try:
-            from .icon_data import load_icon_surface      # the original icon, read from spooky2.exe
+            from .icon_data import load_icon_surface      # the original icon (Fantasy.ico)
             icon = load_icon_surface(pygame, self.exports_root, self.game_root, self.project_root)
             if icon is not None:
                 pygame.display.set_icon(icon)
@@ -494,7 +517,7 @@ class Runtime:
         return self.member_type(num) in ('field', 'text')
 
     def field(self, num):
-        key = (self.current_room if (num >> 16) == 3 else None, num)
+        key = (self._cast_key(num), num)
         f = self.fields.get(key)
         if f is None:
             from .media import Field
@@ -532,7 +555,7 @@ class Runtime:
             ink = self._guess_ink(num, img, ink)
         if img is None or ink not in (8, 36):
             return img
-        key = (self.current_room if (num >> 16) == 3 else None, num, ink)
+        key = (self._cast_key(num), num, ink)
         out = self._ink_cache.get(key)
         if out is None:
             out = self._ink_cache[key] = self._apply_ink(img, ink)
@@ -744,6 +767,10 @@ class Runtime:
         pg = self._pg
         if ev.type != pg.KEYDOWN:
             return False
+        if ev.key == pg.K_F9:
+            self.debug_click = not self.debug_click
+            print('[click] click tracing', 'ON' if self.debug_click else 'OFF', flush=True)
+            return True
         if ev.key == pg.K_F11 or (ev.key in (pg.K_RETURN, pg.K_KP_ENTER) and (ev.mod & pg.KMOD_ALT)):
             self.toggle_fullscreen()
             return True
@@ -825,7 +852,7 @@ class Runtime:
     def drop_image(self, num):
         """unloadMem(member): forget the cached bitmap so the next image() reloads the pristine file
         (undoes stamp_pixels, as unloading the member does in Director)."""
-        key = (self.current_room if (num >> 16) == 3 else None, num)
+        key = (self._cast_key(num), num)
         self._img_cache.pop(key, None)
         for k in [k for k in self._ink_cache if k[1] == num]:
             del self._ink_cache[k]
@@ -881,9 +908,44 @@ class Runtime:
         from . import movie
         movie.interruptHandler()                 # mouseDownScript, then pass()
         chan, s = self.hit_test(pos)
+        if self.debug_click:
+            self._debug_click(pos, chan)
         self.down_chan = chan
         self.down_b = list(s.behaviors) if s else []
         self._call(self.down_b, 'mouseDown')
+
+    # F9 (or ISPY_DEBUG_CLICK=1) prints, for every click, the sprite that gets it and every other sprite under
+    # the pointer (top first) -- the quickest way to see what is covering something that will not take a click.
+    def _debug_click(self, pos, hit_chan):
+        print('[click] stage (%d, %d)  mouse-down goes to channel %s' % (pos[0], pos[1], hit_chan), flush=True)
+        shown = 0
+        for chan in sorted(self.sprites, reverse=True):
+            s = self.sprites[chan]
+            if not s.member:
+                continue
+            b = self.sprite_box(s)
+            if not b:
+                print('[click]   ch %3d member %-8s has NO drawable box (image missing?)' % (chan, s.member), flush=True)
+                continue
+            x, y = pos[0] - b[0], pos[1] - b[1]
+            if not (0 <= x < b[2] and 0 <= y < b[3]):
+                continue
+            solid = ''
+            img = b[4]
+            if img is not None:
+                try:
+                    solid = ' pixel-alpha=%d' % img.get_at((int(x), int(y))).a
+                except Exception:
+                    pass
+            names = ', '.join('%s(%s)' % (type(o).__name__, getattr(o, 'pName', '')) for o in s.behaviors) or '-'
+            print('[click]   ch %3d member %-8s name=%-18s ink=%-3s loc=(%d,%d) box=(%d,%d,%d,%d)%s behaviors=[%s]' % (
+                chan, s.member, self.member_name(s.member), s.ink, s.loc[0], s.loc[1], b[0], b[1], b[2], b[3],
+                solid, names), flush=True)
+            shown += 1
+            if shown >= 14:
+                break
+        if not shown:
+            print('[click]   no sprite is under the pointer', flush=True)
 
     def release(self, pos):
         chan, s = self.hit_test(pos)

@@ -199,26 +199,27 @@ class DiscReport:
         return "%d casts, %d AIFF voice-overs, %d Bink videos" % (len(self.casts), len(self.aiff), len(self.bink))
 
 
-MIN_CASTS_WARN = 15      # a full disc has ~20 .cxt casts
+MIN_CASTS_WARN = 25      # a full disc has 27 .cxt casts (BHP, EXTERNAL, SIGNIN and the B / D / S sets)
+MAIN_MOVIE = "ISPYMAIN7.dxr"    # the main game movie; it sits in DATA/ (and is copied to the disc root too)
 
 
 def collect(source):
     """Inspect the disc and report what's there. Never raises for 'wrong disc'; look at report.errors."""
     r = DiscReport()
     if source.find("DATA") is None:
-        r.errors.append("There is no DATA folder on this disc. This doesn't look like I SPY Spooky Mansion Deluxe "
+        r.errors.append("There is no DATA folder on this disc. This doesn't look like I SPY Fantasy "
                         "(or you picked the wrong drive/image).")
         return r
 
-    r.main_dxr = source.find("DATA/ISPYMAIN8.dxr")
+    r.main_dxr = source.find("DATA/" + MAIN_MOVIE) or source.find(MAIN_MOVIE)
     if r.main_dxr is None:
-        r.errors.append("DATA/ISPYMAIN8.dxr is missing (the main game movie).")
+        r.errors.append("DATA/%s is missing (the main game movie)." % MAIN_MOVIE)
 
     r.casts = [e for e in source.list_files("DATA/CASTS") if e.name.lower().endswith(".cxt")]
     if not any(e.name.lower() == "bhp.cxt" for e in r.casts):
         r.errors.append("DATA/CASTS/BHP.cxt is missing (the code cast the port is translated from).")
     elif len(r.casts) < MIN_CASTS_WARN:
-        r.warnings.append("Only %d casts found in DATA/CASTS (expected about 20); some rooms may be missing." % len(r.casts))
+        r.warnings.append("Only %d casts found in DATA/CASTS (expected about 27); some areas may be missing." % len(r.casts))
 
     r.aiff = source.list_files("DATA/AIFF")
     if not r.aiff:
@@ -228,7 +229,7 @@ def collect(source):
     if not r.bink:
         r.warnings.append("No Bink videos found in DATA/BINK; the game will skip its video clips.")
 
-    r.icon = source.find("DATA/SpookyCD.ico")
+    r.icon = source.find("Fantasy.ico")
 
     h = hashlib.sha256()
     items = ([r.main_dxr] if r.main_dxr else []) + sorted(r.casts, key=lambda e: e.name.lower())

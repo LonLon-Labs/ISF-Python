@@ -8,7 +8,7 @@ import math
 from . import runtime, movie as M
 from .runtime import LObject, lingo_script, get_object, get_object_list
 from .lingo import Sym, Point, set_properties, pop_one, random_, ease
-from .ui import R, S, load_mem, call_all, set_behavior, remove_behavior, blank
+from .ui import R, S, load_mem, unload_mem, call_all, set_behavior, remove_behavior, blank
 
 
 def _alive(o):
@@ -42,9 +42,13 @@ class AnimMove(LObject):
     def __init__(self, theSprite=None, theParent=None):
         self.pParent = theParent
         self.pSprite = theSprite
-        self.pPixelsPerSecond = 100
-        self.pLastUpdate = R().milliseconds()
-        self.pSpeed = 1000 // 30
+        # Fantasy ANIM_MOVE (ParentScript 97) defaults. pPixelsPerSecond is NOT real pixels per second there:
+        # the move is dist / pPixelsPerSecond * pSpeed update-list ticks (one step per tick), so
+        # 63 px at pPixelsPerSecond 10 / pSpeed 10 is 63 steps (~1 s), not 6.3 s.
+        self.pPixelsPerSecond = 10
+        self.pLastUpdate = 0
+        self.pSpeed = 10
+        self.pStepHDist = self.pStepVDist = self.pStepDist = 0
         self.pStartTime = 0
         self.pEaseFlag = 0
         self.pMoveObject = 0
@@ -99,45 +103,34 @@ class AnimMove(LObject):
         self.pHDist = self.pStopLoc[0] - s.loc[0]
         self.pVDist = self.pStopLoc[1] - s.loc[1]
         d = _get_dist(Point(s.loc[0] - self.pStopLoc[0], s.loc[1] - self.pStopLoc[1])) * 1.0
-        if d <= self.pMinimumDist:
+        if d < 1:                                   # (the Lingo would divide by zero here)
             s.loc = self.pStopLoc
             if self.pParent:
                 self.pParent.mPlayDone(self)
             return
-        self.pTotalMilliSeconds = d / self.pPixelsPerSecond * 1000
-        self.pStartTime = rt.milliseconds() * 1.0
-        self.pLastUpdate = rt.milliseconds() - self.pSpeed
+        daTotalUpdates = d / self.pPixelsPerSecond * self.pSpeed
+        self.pStepHDist = self.pHDist / daTotalUpdates * 1.0
+        self.pStepVDist = self.pVDist / daTotalUpdates * 1.0
+        self.pStepDist = _get_dist(Point(self.pStepHDist, self.pStepVDist))
         M.addUpdateList(self)
 
     def mStop(self):
         M.removeUpdateList(self)
 
     def mUpdate(self):
-        rt = R()
-        now = rt.milliseconds()
-        if now - self.pLastUpdate >= self.pSpeed:
-            self.pLastUpdate = now
-            pct = (now - self.pStartTime) / self.pTotalMilliSeconds
-            s = S(self.pSprite)
-            d = _get_dist(Point(s.loc[0] - self.pStopLoc[0], s.loc[1] - self.pStopLoc[1]))
-            if d <= self.pMinimumDist or pct > 1:
-                if _alive(self.pMoveObject):
-                    self.pMoveObject.mSetLoc(self.pStopLoc)
-                else:
-                    s.loc = self.pStopLoc
-                M.removeUpdateList(self)
-                if self.pParent:
-                    self.pParent.mPlayDone(self)
-            else:
-                if self.pEaseFlag:
-                    pct = ease(pct)
-                self.pCurrH = self.pStartH + self.pHDist * pct
-                self.pCurrV = self.pStartV + self.pVDist * pct
-                self.pNewLoc = Point(self.pCurrH, self.pCurrV)
-                if _alive(self.pMoveObject):
-                    self.pParent.mSetLoc(Point(int(self.pCurrH), int(self.pCurrV)))
-                else:
-                    s.loc = self.pNewLoc
+        # Fantasy mUpdate: its throttle `pLastUpdate < (the milliSeconds + (1000 / pSpeed))` is always true,
+        # so it takes one step on every update-list tick.
+        s = S(self.pSprite)
+        d = _get_dist(Point(s.loc[0] - self.pStopLoc[0], s.loc[1] - self.pStopLoc[1]))
+        if d < self.pStepDist:
+            s.loc = self.pStopLoc
+            M.removeUpdateList(self)
+            if self.pParent:
+                self.pParent.mPlayDone(self)
+        else:
+            self.pCurrH = self.pCurrH + self.pStepHDist
+            self.pCurrV = self.pCurrV + self.pStepVDist
+            s.loc = Point(int(round(self.pCurrH)), int(round(self.pCurrV)))
 
 
 # ============================================================================================
@@ -649,199 +642,251 @@ class QuitDialogue(LObject):
 # screens
 # ============================================================================================
 
-@lingo_script('SCREEN_MAIN')                             # ParentScript 43
+@lingo_script('SCREEN_MAIN')                             # Fantasy ParentScript 41
 class ScreenMain(LObject):
     def __init__(self):
+        self.pName = None
+        self.pType = None
+        self.pSavedList = []
+        self.pButtList = []
+        self.pSprite = 0
+        self.pBGMember = 0
+        self.pHelpButton = 0
+        self.pCreditButton = 0
+        self.pSwitchSound = 0
+        self.pOpenAnim = 0
+        self.pAmbientAudio = 0
+        self.pHelpObject = 0
+        self.pTimer = 0
+        self.pPlayAgainAudio = 0
+        self.pPlayAgainAudioPlayed = 0
+        self.pOpenAnimPlayed = 0
         self.pEnabled = 0
 
-    def mInit(self, data, alloc):
-        set_properties(data, self)
-        self.pSprite = pop_one(alloc)
-        self.pButtList = get_object_list(self.pButtList, alloc)
+    def mInit(self, theObjectData, theSpriteAlloc):
+        set_properties(theObjectData, self)
+        self.pSprite = pop_one(theSpriteAlloc)
+        self.pButtList = get_object_list(self.pButtList, theSpriteAlloc)
+        self.pHelpButton = get_object(self.pHelpButton, theSpriteAlloc)
+        self.pCreditButton = get_object(self.pCreditButton, theSpriteAlloc)
         call_all(self.pButtList, 'mSetParent', self)
-        self.pOpenAnim = get_object(self.pOpenAnim, alloc)
-        _call_if(self.pOpenAnim, 'mSetParent', self)
+        self.pHelpButton.mSetParent(self)
+        self.pCreditButton.mSetParent(self)
+        self.pPlayAgainAudio = "M_FIN_V.AIF"
+        self.pPlayAgainAudioPlayed = 0
+        self.pOpenAnim = get_object(self.pOpenAnim, theSpriteAlloc)
+        _call_if(self.pOpenAnim, 'mSetParent', self)       # call(#mSetParent, pOpenAnim, me)
+        self.pHelpObject = get_object(self.pHelpObject, theSpriteAlloc)
+        self.pSavedList = [Sym('pPlayAgainAudioPlayed')]
+        M.addObjectGlob(self)
         self.pOpenAnimPlayed = 0
-        self.pSavedList = []
-        self.pEnabled = 0
-        self.pCurrentSkellyButton = 0
-        self.pStopButt = get_object(self.pStopButt, alloc)
-        _call_if(self.pStopButt, 'mSetParent', self)
+        self.pEnabled = 1
         return self
 
     def mInitPoolObjects(self):
-        self.pOpenAnim.mInitPoolObjects()
-        for b in self.pButtList:
-            _call_if(b, 'mInitPoolObjects')
+        self.pSwitchSound = M.getSoundObject(1, self.pSwitchSound, self)
+        self.pPlayAgainAudio = M.getExSoundObject(2, self.pPlayAgainAudio, self)
 
     def mReleasePoolObjects(self):
-        self.pOpenAnim.mReleasePoolObjects()
-        for b in self.pButtList:
-            _call_if(b, 'mReleasePoolObjects')
+        self.pPlayAgainAudio = M.recycleSoundObject(self.pPlayAgainAudio)
+        self.pSwitchSound = M.recycleSoundObject(self.pSwitchSound)
 
     def mDestroy(self): pass
-    def mGetEnabled(self): return self.pEnabled
-    def mGetType(self): return Sym('SCREEN_MAIN')
-    def mGetName(self): return self.pName
-    def mGetHelpState(self): return 0
-    def mApplicationActivated(self): pass
-    def mApplicationDeactivated(self): pass
-    def mUpdate(self): pass
-    def mShowSkellyButt(self): pass
-    def mButtonDeActivated(self, o): pass
 
     def mShow(self):
-        gd = M.gScreenDaddy
-        if not gd.pOpenAnimPlayed:
-            M.setMember(self.pSprite, self.pBGMember)
-            self.pOpenAnim.mShow()
-            gd.mSetDisableUpdateMode()
-            M.FadeInAmbientSound(self.pAmbientAudio, 3000)
+        if not self.pOpenAnimPlayed:
+            self.pOpenAnimPlayed = 1
             self.pOpenAnim.mPlay()
-            gd.pOpenAnimPlayed = 1
+            M.FadeInAmbientSound(self.pAmbientAudio)
+            self.pEnabled = 0
             return 1
-        self.mShowGraphics()
-        self.mShowSkellyButt()
-        if _ver() != 'a':
-            self.pStopButt.mShow()
+        else:
+            self.mShowGraphics()
         return 0
 
     def mShowGraphics(self):
         M.setMember(self.pSprite, self.pBGMember)
         call_all(self.pButtList, 'mShow')
-        call_all(self.pButtList, 'mPlay')
-        self.pEnabled = 1
-        M.resetCursor()
-        if _ver() != 'a':
-            M.FadeInAmbientSound(self.pAmbientAudio, 1000)
+        self.pCreditButton.mShow()
+        self.pHelpButton.mShow()
+        if M.gGameDaddy.mGetSolvedUserNotify():
+            M.waitCursor()
+            self.mDisable()
+            self.pPlayAgainAudioPlayed = 1
+            self.pPlayAgainAudio.mPlay()
+            self.pEnabled = 0
         else:
-            M.FadeInAmbientSound(self.pAmbientAudio, 0)
+            self.pEnabled = 1
+            M.resetCursor()
+        M.FadeInAmbientSound(self.pAmbientAudio)
 
     def mHide(self):
         call_all(self.pButtList, 'mHide')
+        self.pCreditButton.mHide()
+        self.pHelpButton.mHide()
         blank(self.pSprite)
         self.pEnabled = 0
-        _call_if(self.pStopButt, 'mHide')
+
+    def mUpdate(self): pass
 
     def mLoad(self):
+        call_all(self.pButtList, 'mLoad')
         load_mem(self.pBGMember)
+        self.pCreditButton.mLoad()
+        self.pHelpButton.mLoad()
         if not self.pOpenAnimPlayed:
             self.pOpenAnim.mLoad()
         load_mem(self.pAmbientAudio)
-        _call_if(self.pStopButt, 'mLoad')
-
-    def mLoadList(self, lst):
-        _call_if(self.pStopButt, 'mLoadList', lst)
-        lst.append(self.pBGMember)
         if not self.pOpenAnimPlayed:
-            self.pOpenAnim.mLoadList(lst)
-        lst.append(self.pAmbientAudio)
+            load_mem(self.pSwitchSound)
 
-    def mUnload(self):
-        _call_if(self.pStopButt, 'mUnload')
+    def mLoadList(self, theList):
+        for daButt in self.pButtList:
+            daButt.mLoadList(theList)
+        theList.append(self.pBGMember)
+        self.pCreditButton.mLoadList(theList)
+        self.pHelpButton.mLoadList(theList)
+        self.pOpenAnim.mLoadList(theList)
+        if not self.pOpenAnimPlayed:
+            self.pOpenAnim.mLoadList(theList)
+        theList.append(self.pAmbientAudio)
+        if not self.pOpenAnimPlayed:
+            theList.append(self.pSwitchSound)
+
+    def mUnload(self):                           # Lingo: mUnLoad
         call_all(self.pButtList, 'mUnload')
-        _call_if(self.pOpenAnim, 'mUnload')
+        unload_mem(self.pBGMember)
+        unload_mem(self.pSwitchSound)
+        self.pCreditButton.mUnload()
+        self.pHelpButton.mUnload()
+        self.pOpenAnim.mUnload()
 
-    def mCheckKey(self, keycode):
+    def mGetEnabled(self): return self.pEnabled
+
+    def mCheckKey(self, daKeyCode):
         if self.pEnabled:
-            M.QuitKeyCheck(keycode, 1)
+            M.QuitKeyCheck(daKeyCode, 1)
 
-    def mButtonActivated(self, o):
-        if o is self.pStopButt:
-            M.quitDialogue()
-        else:
-            M.gScreenDaddy.mNavigate(Sym('DOOR'))
+    def mButtonActivated(self, theObject):
+        dest = str(theObject.pDestination).lower()
+        if dest == 's':
+            M.checkCDROMInDrive()
+            M.loadGame(Sym('S'))
+        elif dest == 'b':
+            M.checkCDROMInDrive()
+            M.loadGame(Sym('b'))
+        elif dest == 'd':
+            M.checkCDROMInDrive()
+            M.loadGame(Sym('D'))
+        elif dest == 'quit':
+            M.gQuitDialogue.mShow()
+        elif dest == 'credit':
+            M.gScreenDaddy.mNavigate(Sym('CREDIT'))
+
+    def mButtonDeActivated(self, theObject): pass
+    def mGetType(self): return Sym('SCREEN_MAIN')
+    def mGetName(self): return self.pName
 
     def mDisable(self):
-        _call_if(self.pStopButt, 'mDisable')
-        call_all(self.pButtList, 'mDisable')
         self.pEnabled = 0
+        call_all(self.pButtList, 'mDisable')
+        self.pHelpButton.mDisable()
+        self.pCreditButton.mDisable()
 
     def mEnable(self):
-        _call_if(self.pStopButt, 'mEnable')
-        call_all(self.pButtList, 'mEnable')
         self.pEnabled = 1
+        call_all(self.pButtList, 'mEnable')
+        self.pHelpButton.mEnable()
+        self.pCreditButton.mEnable()
 
-    def mPlayDone(self, o):
-        if o is self.pOpenAnim:
-            self.pOpenAnim.mHide()
-            self.pOpenAnim.mUnload()
+    def mPlayDone(self, theObject):
+        if theObject is self.pPlayAgainAudio:
+            self.mEnable()
+            M.resetCursor()
+        elif theObject is self.pOpenAnim:
             self.mShowGraphics()
-            self.mShowSkellyButt()
+            self.pOpenAnim.mUnload()
+            R().update_stage()                   # (the updateLock = 0; updateStage())
+            M.resetCursor()
+        elif theObject is self.pSwitchSound:
             M.resetCursor()
 
+    def mGetHelpState(self): return 0
+    def mApplicationActivated(self): pass
+    def mApplicationDeactivated(self): pass
 
-@lingo_script('SCREEN_NAV')                              # ParentScript 44
+
+@lingo_script('SCREEN_NAV')                              # Fantasy ParentScript 47
 class ScreenNav(LObject):
     def __init__(self):
-        self.pEnabled = 1
+        self.pName = None
+        self.pType = None
+        self.pBGMember = 0
+        self.pSprite = 0
+        self.pButtList = []
+        self.pBackButton = 0
         self.pHelpButton = 0
+        self.pAmbientAudio = 0
+        self.pDynamicStateList = []
+        self.pEnabled = 1
 
-    def mInit(self, data, alloc):
-        set_properties(data, self)
-        self.pSprite = pop_one(alloc)
-        self.pButtList = get_object_list(self.pButtList, alloc)
-        self.pSHTokenObjectList = get_object_list(self.pSHTokenObjectList, alloc)
+    def mInit(self, theObjectData, theSpriteAlloc):
+        set_properties(theObjectData, self)
+        self.pSprite = pop_one(theSpriteAlloc)
+        self.pButtList = get_object_list(self.pButtList, theSpriteAlloc)
+        self.pDynamicStateList = get_object_list(self.pDynamicStateList, theSpriteAlloc)
         call_all(self.pButtList, 'mSetParent', self)
-        call_all(self.pSHTokenObjectList, 'mSetParent', self)
-        self.pBackButton = get_object(self.pBackButton, alloc)
-        if _alive(self.pBackButton):
-            self.pBackButton.mSetParent(self)
+        call_all(self.pDynamicStateList, 'mSetParent', self)
+        self.pBackButton = 0
         self.pHelpButton = 0
         self.pEnabled = 1
         return self
 
     def mDestroy(self): pass
-    def mGetEnabled(self): return self.pEnabled
-    def mGetType(self): return Sym('SCREEN_NAV')
-    def mGetName(self): return self.pName
-    def mGetHelpState(self): return 0
-    def mApplicationActivated(self): pass
-    def mApplicationDeactivated(self): pass
-    def mButtonDeActivated(self, o): pass
-    def mHuntObjectFound(self, o): self.mEnable()
-
-    def mInitPoolObjects(self):
-        M.gScreenDaddy.mInitScavengerHuntPoolObjects()
-        self.pHelpButton = M.getGameHelpButton()
-        self.pHelpButton.mSetParent(self)
-        if not _alive(self.pBackButton):
-            self.pBackButton = M.getGameBackButton()
-            self.pBackButton.mSetParent(self)
-
-    def mReleasePoolObjects(self):
-        M.gScreenDaddy.mReleaseScavengerHuntPoolObjects()
+    def mInitPoolObjects(self): pass
+    def mReleasePoolObjects(self): pass
 
     def mLoad(self):
-        call_all(self.pSHTokenObjectList, 'mLoad')
+        call_all(self.pDynamicStateList, 'mLoad')
         M.gScreenDaddy.mLoadScavengerHunt()
         load_mem(self.pAmbientAudio)
         call_all(self.pButtList, 'mLoad')
         load_mem(self.pBGMember)
 
-    def mLoadList(self, lst):
-        call_all(self.pSHTokenObjectList, 'mLoadList', lst)
-        M.gScreenDaddy.mLoadScavengerHuntlist(lst)
-        lst.append(self.pAmbientAudio)
-        call_all(self.pButtList, 'mLoadList', lst)
-        lst.append(self.pBGMember)
+    def mLoadList(self, theList):
+        call_all(self.pDynamicStateList, 'mLoadList', theList)
+        M.gScreenDaddy.mLoadScavengerHuntlist(theList)
+        theList.append(self.pAmbientAudio)
+        call_all(self.pButtList, 'mLoadList', theList)
+        theList.append(self.pBGMember)
 
-    def mUnload(self):
+    def mUnload(self):                           # Lingo: mUnLoad
         M.gScreenDaddy.mUnloadScavengerHunt()
-        call_all(self.pSHTokenObjectList, 'mUnload')
+        call_all(self.pDynamicStateList, 'mUnload')
         call_all(self.pButtList, 'mUnload')
+        unload_mem(self.pBGMember)
 
-    def mCheckKey(self, keycode):
+    def mHuntObjectFound(self, theObject):
+        self.mEnable()
+
+    def mCheckKey(self, daKeyCode):
         if self.pEnabled:
-            M.QuitKeyCheck(keycode, 1)
+            M.QuitKeyCheck(daKeyCode, 1)
+
+    def mGetEnabled(self): return self.pEnabled
 
     def mShow(self):
         M.gScreenDaddy.mShowScavengerHunt()
-        _call_if(self.pHelpButton, 'mShow')
-        _call_if(self.pBackButton, 'mShow')
+        self.pHelpButton = M.getGameHelpButton()
+        self.pBackButton = M.getGameBackButton()
+        self.pHelpButton.mSetParent(self)
+        self.pBackButton.mSetParent(self)
+        self.pHelpButton.mShow()
+        self.pBackButton.mShow()
         M.setMember(self.pSprite, self.pBGMember)
         call_all(self.pButtList, 'mShow')
-        call_all(self.pSHTokenObjectList, 'mShow')
+        if M.gScreenDaddy.mShowDynamicStates():
+            call_all(self.pDynamicStateList, 'mShow')
         M.FadeInAmbientSound(self.pAmbientAudio)
         self.pEnabled = 1
         if not M.gScreenDaddy.mCheckStatus():
@@ -851,35 +896,38 @@ class ScreenNav(LObject):
         _call_if(self.pHelpButton, 'mHide')
         _call_if(self.pBackButton, 'mHide')
         call_all(self.pButtList, 'mHide')
-        call_all(self.pSHTokenObjectList, 'mHide')
+        call_all(self.pDynamicStateList, 'mHide')
         blank(self.pSprite)
         M.gScreenDaddy.mHideScavengerHunt()
         self.pEnabled = 0
 
-    def mButtonActivated(self, o):
-        gd = M.gScreenDaddy
-        if o is self.pHelpButton:
-            gd.pHelpPlayer.mStartHelp()
-        elif o is self.pBackButton:
+    def mButtonActivated(self, theObject):
+        if theObject is self.pHelpButton:
+            M.gGameDaddy.pCurrentGame.pHelpPlayer.mStartHelp()
+        elif theObject is self.pBackButton:
             M.navigateBack()
-        elif o in self.pSHTokenObjectList:
-            gd.mExternalSHTokenFound(o)
         else:
-            M.navigate(o.pDestination)
+            M.navigate(theObject.pDestination)
+
+    def mButtonDeActivated(self, theButton): pass
 
     def mEnable(self):
         self.pEnabled = 1
         _call_if(self.pHelpButton, 'mEnable')
         _call_if(self.pBackButton, 'mEnable')
         call_all(self.pButtList, 'mEnable')
-        call_all(self.pSHTokenObjectList, 'mEnable')
 
     def mDisable(self):
         self.pEnabled = 0
         _call_if(self.pHelpButton, 'mDisable')
         _call_if(self.pBackButton, 'mDisable')
         call_all(self.pButtList, 'mDisable')
-        call_all(self.pSHTokenObjectList, 'mDisable')
+
+    def mGetType(self): return Sym('SCREEN_NAV')
+    def mGetName(self): return self.pName
+    def mGetHelpState(self): return 0
+    def mApplicationActivated(self): pass
+    def mApplicationDeactivated(self): pass
 
 
 @lingo_script('SCREEN_DOOR')                             # ParentScript 47

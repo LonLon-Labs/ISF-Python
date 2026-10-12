@@ -20,7 +20,7 @@ class SetupWindow:
         self.last_error = None
 
         self.root = tk.Tk()
-        self.root.title("I SPY Spooky Mansion Deluxe - First-time setup")
+        self.root.title("I SPY Fantasy - First-time setup")
         self.root.geometry("640x520")
         self.root.minsize(560, 460)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -29,7 +29,7 @@ class SetupWindow:
         ttk.Label(self.root, text="First-time setup", font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=12, pady=(12, 0))
         self.intro = ttk.Label(
             self.root, wraplength=600, justify="left",
-            text="This port doesn't include any game files. Choose your own I SPY Spooky Mansion Deluxe disc "
+            text="This port doesn't include any game files. Choose your own I SPY Fantasy disc "
                  "image (.iso) or the disc's drive, and the launcher will extract and convert what it needs. "
                  "This only happens once.")
         self.intro.pack(anchor="w", **pad)

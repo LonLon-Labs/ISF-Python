@@ -17,7 +17,7 @@ import sys
 
 TOKEN = re.compile(r'''
     \s*(?:
-      (?P<str>"(?:[^"\\]|\\.)*")
+      (?P<str>"[^"]*")
      |(?P<sym>\#[A-Za-z_][A-Za-z0-9_]*)
      |(?P<num>-?\d+\.\d+|-?\d+)
      |(?P<id>[A-Za-z_][A-Za-z0-9_]*)
@@ -142,9 +142,8 @@ def parse_handler_file(text):
     while i < len(text):
         c = text[i]
         if instr:
-            if c == '\\':
-                i += 1
-            elif c == '"':
+            # Lingo strings have no backslash escapes (Windows paths like "C:\\DATA\\" end in one)
+            if c == '"':
                 instr = False
         else:
             if c == '"':

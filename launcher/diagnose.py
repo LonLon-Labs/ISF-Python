@@ -1,7 +1,7 @@
 """Find out why DirectorCastRipper.exe crashes when launched by the launcher.
 
     python -m launcher.diagnose            # casts: the original set of trials on SIGNIN.cxt
-    python -m launcher.diagnose movie      # the MOVIE ISPYMAIN8.dxr (the current blocker), several variants
+    python -m launcher.diagnose movie      # the MOVIE ISPYMAIN7.dxr (the current blocker), several variants
     python -m launcher.diagnose help       # just save `DirectorCastRipper.exe --help` to diag\\help.txt
 
 Each trial changes one thing and prints the exit code (as hex), time, output file count and the last
@@ -18,7 +18,7 @@ from .config import Paths
 from .ripper import NOWIN
 
 ORIGINAL_DIR = Path(r"C:\Users\Wesley\Downloads\DirectorCastRipper_D10")
-INSTALLED_DATA = ORIGINAL_DIR / "ispy_spooky_mansion_deluxe" / "DATA"
+INSTALLED_DATA = ORIGINAL_DIR / "ispy_fantasy" / "DATA"
 
 _results = []
 
@@ -113,13 +113,13 @@ def casts(paths):
 
 
 def movie(paths):
-    """Run the movie ISPYMAIN8.dxr several ways. Movies can take minutes, so each trial has a 10 minute cap."""
+    """Run the movie ISPYMAIN7.dxr several ways. Movies can take minutes, so each trial has a 10 minute cap."""
     d = paths.root / "diag"
     app_exe, app_dir = paths.ripper_exe, paths.ripper_dir
     orig_exe = ORIGINAL_DIR / "DirectorCastRipper.exe"
-    work_dxr = paths.work / "DATA" / "ISPYMAIN8.dxr"
-    inst_dxr = INSTALLED_DATA / "ISPYMAIN8.dxr"
-    inst_dir = INSTALLED_DATA / "ISPYMAIN8.dir"
+    work_dxr = paths.work / "DATA" / "ISPYMAIN7.dxr"
+    inst_dxr = INSTALLED_DATA / "ISPYMAIN7.dxr"
+    inst_dir = INSTALLED_DATA / "ISPYMAIN7.dir"
     dismiss = ["--dismiss-dialogs"]
     T = 600
     say("work copy      : %s (%s)" % (work_dxr, "exists" if work_dxr.exists() else "MISSING"))
@@ -146,7 +146,7 @@ def movie(paths):
     # 6. Narrow the export; member type names are unverified, see diag\help.txt.
     mv("M6 installed .dxr, --member-types sound", app_exe, app_dir, dismiss + ["--member-types", "sound"], "M6", inst_dxr)
     mv("M7 installed .dxr, --member-types image", app_exe, app_dir, dismiss + ["--member-types", "image"], "M7", inst_dxr)
-    # 8. The user's original Cast Ripper folder (what produced Exports\ISPYMAIN8).
+    # 8. The user's original Cast Ripper folder (what produced the first exports).
     if orig_exe.exists():
         mv("M8 ORIGINAL ripper folder, installed .dxr", orig_exe, ORIGINAL_DIR, dismiss, "M8", inst_dxr)
     return 0
@@ -157,7 +157,7 @@ def formats(paths):
     selected whose file format (wav for sounds, txt for fields) isn't in --formats (default is only png html)."""
     d = paths.root / "diag"
     exe, cwd = paths.ripper_exe, paths.ripper_dir
-    inp = INSTALLED_DATA / "ISPYMAIN8.dxr"
+    inp = INSTALLED_DATA / "ISPYMAIN7.dxr"
     base = ["--dismiss-dialogs"]
     T = 900
 
@@ -177,7 +177,7 @@ def probe(paths):
     Each ripper run is repeated, since M7 succeeded once and N5 (nearly identical) crashed."""
     d = paths.root / "diag"
     exe, cwd = paths.ripper_exe, paths.ripper_dir
-    inp = INSTALLED_DATA / "ISPYMAIN8.dxr"
+    inp = INSTALLED_DATA / "ISPYMAIN7.dxr"
     dismiss = ["--dismiss-dialogs"]
     T = 900
     n = [0]

@@ -1,33 +1,42 @@
-"""Window icon: read the original game icon straight out of spooky2.exe (the Director projector).
+"""Window icon: read the bundled ispy/icon.png (written by tools/extract_icon.py).
 
-The icon lives in the exe's resource section (RT_GROUP_ICON + RT_ICON).  We parse the PE file by hand, pick the
-largest 32-bit entry and turn its DIB into a pygame surface.  If the exe can't be found nothing happens and the
-default pygame icon stays.  (This file used to hold an embedded copy of the icon; reading the exe avoids that.)
+Only the bundled PNG is used; the game's Fantasy.ico (copied from the disc) is never read.
+If icon.png is missing nothing happens and the default pygame icon stays.
+
+The ICO helpers below (_read_icon_entries, read_ico_file, dib_to_rgba) are kept for
+tools/extract_icon.py, which can pull an icon out of a Windows .exe or a standalone .ico file.
 """
+import io
 import os
 import struct
 
-EXE_NAME = 'spooky2.exe'
-FOLDER_NAME = 'I SPY Spooky Mansion Deluxe'
+PNG_SIG = b'\x89PNG\r\n\x1a\n'
 
 
-def _find_exe(exports_root, game_root, project_root):
-    cands = []
-    for base in (exports_root, game_root, project_root):
-        if not base:
-            continue
-        base = os.path.abspath(base)
-        for up in (base, os.path.dirname(base), os.path.dirname(os.path.dirname(base))):
-            cands.append(os.path.join(up, FOLDER_NAME, EXE_NAME))
-            cands.append(os.path.join(up, EXE_NAME))
-    for c in cands:
-        if os.path.isfile(c):
-            return c
-    return None
+def read_ico_file(path):
+    """Return a list of (width, height, bitcount, data) for every image in an .ico file.
+    data is a DIB (BITMAPINFOHEADER + pixels + AND mask) or, in newer files, a complete PNG."""
+    with open(path, 'rb') as f:
+        d = f.read()
+    _reserved, kind, count = struct.unpack_from('<HHH', d, 0)
+    if kind != 1:
+        return []
+    out = []
+    for i in range(count):
+        w, h, _cc, _res, _planes, bc, size, off = struct.unpack_from('<BBBBHHII', d, 6 + i * 16)
+        data = d[off:off + size]
+        if data[:8] == PNG_SIG:
+            w, h = struct.unpack('>II', data[16:24])
+        else:
+            w, h = w or 256, h or 256
+            if not bc and len(data) >= 16:
+                bc = struct.unpack_from('<H', data, 14)[0]
+        out.append((w, h, bc, data))
+    return out
 
 
 def _read_icon_entries(path):
-    """Return a list of (width, height, bitcount, dib_bytes) for the first icon group in the exe."""
+    """Return a list of (width, height, bitcount, dib_bytes) for the first icon group in an exe."""
     d = open(path, 'rb').read()
     pe = struct.unpack_from('<I', d, 0x3C)[0]
     nsec = struct.unpack_from('<H', d, pe + 6)[0]
@@ -77,17 +86,65 @@ def _read_icon_entries(path):
     return out
 
 
-def _dib_to_surface(pg, dib):
-    """32-bit BGRA bottom-up DIB (BITMAPINFOHEADER + pixels) -> pygame surface with per-pixel alpha."""
-    hdr = struct.unpack_from('<IiiHH', dib, 0)
-    w, h2, bc = hdr[1], hdr[2], hdr[4]
-    h = h2 // 2
-    if bc != 32:
-        return None
-    px = dib[hdr[0]:hdr[0] + w * h * 4]
-    rows = [px[(h - 1 - y) * w * 4:(h - y) * w * 4] for y in range(h)]   # flip to top-down
-    flat = b''.join(rows)
-    return pg.image.frombuffer(flat, (w, h), 'BGRA').convert_alpha()
+def dib_to_rgba(dib):
+    """ICO-style DIB (BITMAPINFOHEADER with doubled height, XOR bitmap + AND mask) -> (w, h, rgba bytes).
+    Handles 1/4/8-bit palette, 24-bit and 32-bit images."""
+    hsize, w, h2, _planes, bc, comp, _isz, _xp, _yp, clrused, _clrimp = struct.unpack_from('<IiiHHIIiiII', dib, 0)
+    if comp != 0:
+        raise ValueError('compressed icon bitmap (%d) not supported' % comp)
+    h = abs(h2) // 2
+    pal_n = clrused or ((1 << bc) if bc <= 8 else 0)
+    pal = [dib[hsize + i * 4:hsize + i * 4 + 3] for i in range(pal_n)]          # stored B, G, R
+    pix = hsize + pal_n * 4
+    rowb = ((w * bc + 31) // 32) * 4
+    mask_off = pix + rowb * h
+    mrow = ((w + 31) // 32) * 4
+    have_mask = mask_off + mrow * h <= len(dib)
+    out = bytearray(w * h * 4)
+    any_alpha = False
+    for y in range(h):
+        base = pix + (h - 1 - y) * rowb                     # rows are stored bottom-up
+        row = dib[base:base + rowb]
+        o = y * w * 4
+        for x in range(w):
+            if bc == 32:
+                b, g, r, a = row[x * 4:x * 4 + 4]
+            elif bc == 24:
+                b, g, r = row[x * 3:x * 3 + 3]
+                a = 255
+            else:
+                if bc == 8:
+                    i = row[x]
+                elif bc == 4:
+                    i = (row[x >> 1] >> (4 * (1 - (x & 1)))) & 15
+                elif bc == 1:
+                    i = (row[x >> 3] >> (7 - (x & 7))) & 1
+                else:
+                    raise ValueError('%d-bit icon not supported' % bc)
+                b, g, r = pal[i]
+                a = 255
+            if a:
+                any_alpha = True
+            out[o:o + 4] = bytes((r, g, b, a))
+            o += 4
+    if have_mask and (bc < 32 or not any_alpha):
+        for y in range(h):
+            mbase = mask_off + (h - 1 - y) * mrow
+            for x in range(w):
+                transparent = (dib[mbase + (x >> 3)] >> (7 - (x & 7))) & 1
+                idx = (y * w + x) * 4
+                if bc == 32 and not any_alpha:
+                    out[idx + 3] = 0 if transparent else 255
+                elif transparent:
+                    out[idx + 3] = 0
+    return w, h, bytes(out)
+
+
+def _entry_to_surface(pg, data):
+    if data[:8] == PNG_SIG:
+        return pg.image.load(io.BytesIO(data))
+    w, h, rgba = dib_to_rgba(data)
+    return pg.image.frombuffer(rgba, (w, h), 'RGBA')        # no convert_alpha(): may run before the window exists
 
 
 def _bundled_png():
@@ -100,22 +157,11 @@ def _bundled_png():
 
 
 def load_icon_surface(pg, exports_root=None, game_root=None, project_root=None):
+    # only the bundled PNG is used; the game's Fantasy.ico is deliberately ignored
     try:
         png = _bundled_png()
         if png:
-            return pg.image.load(png)          # no convert_alpha(): this may run before the window exists
+            return pg.image.load(png)
     except Exception:
         pass
-    try:
-        exe = _find_exe(exports_root, game_root, project_root)
-        if not exe:
-            return None
-        best = None
-        for w, h, bc, dib in _read_icon_entries(exe):
-            if bc == 32 and (best is None or w > best[0]):
-                best = (w, h, dib)
-        if not best:
-            return None
-        return _dib_to_surface(pg, best[2])
-    except Exception:
-        return None
+    return None

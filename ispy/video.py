@@ -52,6 +52,8 @@ class VideoClip:
         self.chan = None
         self.finished = False
         self.wav = None
+        self.audio_end = 0.0
+        self._snd = None
         self._stop = False
         self._probe()
         self._prep_audio()
@@ -71,20 +73,32 @@ class VideoClip:
             print('[bink] probe failed:', e)
 
     def _prep_audio(self):
+        """Extract the clip's soundtrack to a temp .wav (cached per source file + size + mtime, so a stale or
+        half-written wav from an earlier run can never be reused) and report why when there is none."""
+        name = os.path.basename(self.path)
         try:
             d = os.path.join(tempfile.gettempdir(), 'ispy_bink')
             os.makedirs(d, exist_ok=True)
-            wav = os.path.join(d, os.path.splitext(os.path.basename(self.path))[0] + '.wav')
-            if not os.path.exists(wav):
-                subprocess.run([find_ffmpeg(), '-v', 'error', '-y', '-i', self.path, '-vn', '-acodec', 'pcm_s16le',
-                                '-ar', '44100', '-ac', '2', wav], capture_output=True, creationflags=_NOWIN,
-                               timeout=120)
-            if os.path.exists(wav) and os.path.getsize(wav) > 1000:
-                self.wav = wav
-            elif os.path.exists(wav):
-                os.remove(wav)
+            st = os.stat(self.path)
+            stem = os.path.splitext(name)[0]
+            wav = os.path.join(d, '%s_%d_%d.wav' % (stem, st.st_size, int(st.st_mtime)))
+            if not (os.path.exists(wav) and os.path.getsize(wav) > 1000):
+                tmp = wav + '.part'
+                r = subprocess.run([find_ffmpeg(), '-v', 'error', '-y', '-i', self.path, '-vn', '-map', '0:a:0?',
+                                    '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', '-f', 'wav', tmp],
+                                   capture_output=True, text=True, errors='replace', creationflags=_NOWIN,
+                                   timeout=120)
+                if os.path.exists(tmp) and os.path.getsize(tmp) > 1000:
+                    os.replace(tmp, wav)
+                else:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                    print('[bink] no audio extracted from %s (%s)' % (name, (r.stderr or 'no audio stream').strip()[:300]),
+                          flush=True)
+                    return
+            self.wav = wav
         except Exception as e:
-            print('[bink] audio extract failed:', e)
+            print('[bink] audio extract failed for %s: %s' % (name, e), flush=True)
 
     def _read(self, proc, q):
         size = self.w * self.h * 3
@@ -116,12 +130,24 @@ class VideoClip:
                                      stderr=subprocess.DEVNULL, creationflags=_NOWIN)
         threading.Thread(target=self._read, args=(self.proc, self.q), daemon=True).start()
         pg = self.rt._pg
-        if self.wav and pg and pg.mixer.get_init():
+        self.chan = None
+        self.audio_end = 0.0
+        if not self.wav:
+            print('[bink] playing %s without sound (no audio track extracted)' % os.path.basename(self.path),
+                  flush=True)
+        elif not (pg and pg.mixer.get_init()):
+            print('[bink] audio mixer is not initialised; %s plays silent' % os.path.basename(self.path), flush=True)
+        else:
             try:
-                self.chan = pg.mixer.Channel(pg.mixer.get_num_channels() - 1)
-                self.chan.play(pg.mixer.Sound(self.wav))
-            except Exception:
-                self.chan = None
+                snd = pg.mixer.Sound(self.wav)
+                snd.set_volume(1.0)
+                ch = pg.mixer.find_channel(True)          # any channel (force-steal one if all are busy)
+                ch.set_volume(1.0)
+                ch.play(snd)
+                self.chan, self._snd = ch, snd
+                self.audio_end = time.monotonic() + snd.get_length()
+            except Exception as e:
+                print('[bink] audio playback failed for %s: %s' % (os.path.basename(self.path), e), flush=True)
         self.t0 = time.monotonic()
         self.rt.video = self
 
@@ -140,7 +166,9 @@ class VideoClip:
         if buf is not None:
             self.frame = self.rt._pg.image.frombuffer(buf, (self.w, self.h), 'RGB').convert()
         if self.eof and self.q.empty():
-            self.finished = True
+            # a Bink clip ends when its video AND its sound are done; never cut the soundtrack off early
+            if self.chan is None or time.monotonic() >= self.audio_end:
+                self.finished = True
         return self.finished
 
     def stop(self):
@@ -157,6 +185,7 @@ class VideoClip:
             except Exception:
                 pass
             self.chan = None
+        self._snd = None
         if getattr(self.rt, 'video', None) is self:
             self.rt.video = None
         self.finished = True
@@ -247,6 +276,12 @@ class Bink(LObject):
             M.addUpdateList(self)
             return
         self.pPlayed += 1
+        if not isinstance(self.pBinkObject, VideoClip) and (self.pRepeatable or self.pPlayed == 1):
+            # mLoad did not run (or ran before the clip was available): open it now rather than skipping the video
+            try:
+                self.pBinkObject = VideoClip(R(), self.pFilePath, self.pLoc)
+            except Exception as e:
+                print('[bink] could not open %s: %s' % (self.pFilePath, e), flush=True)
         if isinstance(self.pBinkObject, VideoClip):
             self.pBinkObject.start()
             M.addUpdateList(self)
@@ -279,3 +314,122 @@ class Bink(LObject):
             self.pBinkObject = 0
             S(self.pBackSprite).member = self.pBackMember
             self._finish()
+
+
+@lingo_script('BINK_TOKEN')                              # Fantasy ParentScript 122
+class BinkToken(LObject):
+    """A riddle-screen scavenger-hunt token (e.g. the clover in B_AC / B_AC05): a clickable still (pMember) that
+    plays a Bink clip when clicked and then rests on pStateChangeMember.  Translated one-to-one from the .ls:
+    mouseDown -> pParent.mRiddleButtonClicked(me), and the parent (SCREEN_RIDDLE / SCREEN_RIDDLE_MAG) calls mPlay.
+    Without ffmpeg / the .bik file it takes the original's `not binkLoaded()` path (10 update ticks, then the still)."""
+
+    def __init__(self):
+        self.pBackSprite = 0
+        self.pBackMember = 0
+        self.pParent = 0
+        self.pBinkObject = 0
+        self.pFound = 0
+        self.pFlushCount = 0
+        self.pMagPoint = 0
+        self.pLoc = None
+        self.pInk = 8
+
+    def mInit(self, theObjectData, theSpriteAlloc):
+        set_properties(theObjectData, self)
+        self.pSprite = pop_one(theSpriteAlloc)
+        self.pFilePath = os.path.join(R().game_root or '', 'DATA', 'BINK', str(self.pFileName))
+        self.pFound = 0
+        self.pFlushCount = 0
+        self.pCurMember = self.pMember
+        self.pSavedList = [Sym('pFound'), Sym('pCurMember')]
+        M.addObjectGlob(self)
+        return self
+
+    def _bink_loaded(self):
+        return bool(find_ffmpeg()) and os.path.exists(self.pFilePath)
+
+    def mDestroy(self): pass
+
+    def mLoad(self):
+        if not self.pFound and not self.pBinkObject:
+            if self._bink_loaded():
+                self.pBinkObject = VideoClip(R(), self.pFilePath, self.pLoc)
+        load_mem(self.pStateChangeMember)
+        load_mem(self.pMember)
+
+    def mLoadList(self, theList): theList.append(self)
+
+    def mUnLoad(self):
+        if isinstance(self.pBinkObject, VideoClip):
+            self.pBinkObject.stop()
+        self.pBinkObject = 0
+    mUnload = mUnLoad
+
+    def mSetParent(self, theObject): self.pParent = theObject
+    def mGetType(self): return Sym('BINK_TOKEN')
+    def mGetName(self): return self.pName
+
+    def mShow(self):
+        S(self.pSprite).member = self.pCurMember
+        S(self.pSprite).ink = 8
+        if not self.pFound:
+            set_behavior(self.pSprite, self)
+
+    def mHide(self):
+        blank(self.pSprite)
+
+    def mouseDown(self):
+        if self.pParent:
+            self.pParent.mRiddleButtonClicked(self)
+
+    def mPlay(self):
+        self.pFound = 1
+        if not self._bink_loaded():
+            self.pFlushCount = 10
+            M.addUpdateList(self)
+            return
+        if isinstance(self.pBinkObject, VideoClip):
+            self.pBinkObject.start()
+            M.addUpdateList(self)
+        else:
+            if self.pParent:
+                self.pParent.mPlayDone(self)
+
+    def _finish(self):
+        S(self.pSprite).member = self.pStateChangeMember
+        self.pCurMember = self.pStateChangeMember
+        M.removeUpdateList(self)
+        if self.pParent:
+            self.pParent.mPlayDone(self)
+
+    def mUpdate(self):
+        if not self._bink_loaded():
+            self.pFlushCount -= 1
+            if not self.pFlushCount:
+                self._finish()
+            return
+        clip = self.pBinkObject
+        if not isinstance(clip, VideoClip):
+            M.removeUpdateList(self)
+            return
+        if clip.update():
+            clip.stop()
+            self.pBinkObject = 0
+            self._finish()
+
+    def mEnable(self): set_behavior(self.pSprite, self)
+    def mDisable(self): remove_behavior(self.pSprite, self)
+    def mSetFound(self): self.pFound = 1
+    def mGetFound(self): return self.pFound
+    def mSetBackSprite(self, theSpriteAlloc): pass
+    def mGetBackMember(self): return 0
+    def mGetWordSound(self): return 0
+    def mGetWordClickedSound(self): return 0
+    def mPlayWordSound(self): pass
+    def mToggleMulti(self): pass
+
+    def mStop(self):
+        if isinstance(self.pBinkObject, VideoClip):
+            self.pBinkObject.stop()
+        self.pBinkObject = 0
+        self._finish()

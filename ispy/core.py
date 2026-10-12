@@ -22,6 +22,15 @@ def _rt():
     return runtime.rt
 
 
+def _screen_desc(s):
+    """'SCREEN_RIDDLE_MAG <name>' for a ported screen, 'UNPORTED SCREEN_ROCKET <name>' for a MissingScript stub."""
+    if isinstance(s, MissingScript):
+        return 'UNPORTED %s %s' % (s._name, s.__dict__.get('pName'))
+    if not s:
+        return '(none)'
+    return '%s %s' % (type(s).__name__, getattr(s, 'pName', None))
+
+
 # ------------------------------------------------------------------------------------------
 @lingo_script('LOADER')                                   # ParentScript 28
 class Loader(LObject):
@@ -173,7 +182,6 @@ class ScreenDaddy(LObject):
         self.pLoaderObject = None
         self.pCastChanged = 0
         self.pLoaderScriptNumber = 0
-        self.pDisableUpdateMode = 0
 
     def mInit(self, data, alloc):
         set_properties(data, self)
@@ -192,7 +200,6 @@ class ScreenDaddy(LObject):
         self.pCurrentScreen = None
         self.pHistory = None
 
-    def mSetDisableUpdateMode(self): self.pDisableUpdateMode = 1
     def mGetName(self): return self.pName
     def mGetType(self): return Sym('ScreenDaddy')
     def mGetHelpState(self): return 0
@@ -209,8 +216,6 @@ class ScreenDaddy(LObject):
     def mUnload(self): self._cur('mUnload')
     def mDisable(self): self._cur('mDisable')
     def mEnable(self): self._cur('mEnable')
-    def mApplicationActivated(self): self._cur('mApplicationActivated')
-    def mApplicationDeactivated(self): self._cur('mApplicationDeactivated')
 
     def mShow(self):
         if not self.pCurrentScreen:
@@ -258,6 +263,7 @@ class ScreenDaddy(LObject):
             M.resetCursor()
             self.pCurrentScreen.mEnable()
             return
+        print('[nav] %s  ->  %s' % (_screen_desc(self.pCurrentScreen), _screen_desc(new)), flush=True)
         if self.pCurrentScreen:
             M.clearInterruptMode()
             self.pCurrentScreen.mDisable()
@@ -268,6 +274,7 @@ class ScreenDaddy(LObject):
         self.pCastChanged = M.changeRiddleCast(str(section))
         self.pCurrentScreen = new
         M.setCurScreen(new)
+        self.pCurrentScreen.mInitPoolObjects()
         lst = []
         new.mLoadList(lst)
         self.pLoaderObject.mSetLoadList(lst)
@@ -275,20 +282,20 @@ class ScreenDaddy(LObject):
 
     def mPlayDone(self, obj):
         if obj is self.pLoaderObject:
-            print('mPlayDone -> showing', type(self.pCurrentScreen).__name__,
-              getattr(self.pCurrentScreen, 'pName', None))
+            rt = _rt()
+            print('[screen] showing %s' % _screen_desc(self.pCurrentScreen), flush=True)
             if self.pPreviousScreen:
                 self.pPreviousScreen.mHide()
                 self.pPreviousScreen.mReleasePoolObjects()
-                _rt().blank_sprite_range(1, 150)
+                rt.blank_sprite_range(1, 150)
                 self.pPreviousScreen = 0
-            self.pCurrentScreen.mInitPoolObjects()
-            self.pCurrentScreen.mShow()
-            _rt()._save_due = True              # autosave after every screen change
-            if self.pDisableUpdateMode:
-                self.pDisableUpdateMode = 0
-            elif not self.pCastChanged:
+            # (Lingo: `if the frame <> 5 then go(5)`)
+            theManualUpdate = self.pCurrentScreen.mShow()
+            rt._save_due = True                 # port: autosave after every screen change
+            if not self.pCastChanged and not theManualUpdate:
+                rt.update_stage()
                 M.changeRiddleCast('EXTERNAL')
+            rt.flush_input()
 
 
 # ------------------------------------------------------------------------------------------

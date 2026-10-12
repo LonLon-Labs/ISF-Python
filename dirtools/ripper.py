@@ -1,6 +1,6 @@
 """Pure-Python replacement for the DirectorCastRipper.exe + ProjectorRays.exe first-run rip stage.
 
-Reads <data_dir>/ISPYMAIN8.dxr and <data_dir>/CASTS/*.cxt and writes, per file, under <out_root>/<fileBaseName>/:
+Reads <data_dir>/ISPYMAIN7.dxr and <data_dir>/CASTS/*.cxt and writes, per file, under <out_root>/<fileBaseName>/:
     Members.csv, Casts.csv        (CRLF; columns Number,Type,Name,Registration Point,Filename)
     <memberNum>.png / .wav / .txt (no name suffix)
     casts/<castName>/<ScriptType> <n>[ - name].ls     (only for the script-bearing files, see SCRIPT_TARGETS)
@@ -14,8 +14,11 @@ import warnings
 from . import container as c
 from . import media
 
-# file name (lowercase) -> required.  convert_data.py reads only BHP's scripts; ISPYMAIN8's are best effort.
-SCRIPT_TARGETS = {'bhp.cxt': True, 'ispymain8.dxr': False}
+# the main game movie (I SPY Fantasy is a Director 7 movie)
+MAIN_MOVIE = 'ISPYMAIN7.dxr'
+
+# file name (lowercase) -> required.  convert_data.py reads only BHP's scripts; the main movie's are best effort.
+SCRIPT_TARGETS = {'bhp.cxt': True, MAIN_MOVIE.lower(): False}
 
 STXT = c.FOURCC('S', 'T', 'X', 'T')
 
@@ -176,7 +179,7 @@ def rip_file(path, out_dir, log=None, cancel=None, scripts=None):
 
 def find_inputs(data_dir):
     inputs = []
-    main = os.path.join(data_dir, 'ISPYMAIN8.dxr')
+    main = os.path.join(data_dir, MAIN_MOVIE)
     if os.path.exists(main):
         inputs.append(main)
     cdir = os.path.join(data_dir, 'CASTS')

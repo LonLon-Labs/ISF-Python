@@ -13,8 +13,10 @@ from .lingo import Sym, get_range_list, pop_last, pop_last_range, pop_one, get_d
 # ---- globals ---------------------------------------------------------------------------------
 gCursor = None
 gInterruptableObject = 0
-gScreenDaddy = 0
+gGameDaddy = 0            # root object (GameDaddy, from getGameDaddy)
+gScreenDaddy = 0           # the *current game* (a GAME, or the MAIN SCREENDADDY with sign-in/menu/credits)
 gCurScreen = 0
+gLoadStart = 0
 gPlayer = ''
 gPlayerDir = ''
 gSavedGameDir = ''
@@ -22,19 +24,15 @@ gSaveLoadObject = 0
 gGlobalSaveLoadObject = 0
 gAmbientSound = 0
 gBlank = 1
-gWordRectBlank = 6
-gFlushSound = 4            # gMemberNumberList.tiny  (silent 'flush' sound in the main cast)
-gEndFadeMember = 10        # gMemberNumberList.ENDFADE
+gFlushSound = 132          # silent 'flush' sound in the main cast (INIT_MAIN)
 gSoundObjectPool = []
 gExSoundObjectPool = []
 gSimpleButtPool = []
 gWiggleObjectPool = []
 gQuitDialogue = 0
-gCreditDialogue = 0
+gUserHasLamePC = 0         # Lingo global set at startup from isLamePC(); the port always runs as a "fast" PC
 gDragSprite = 0
-gUserHasLamePC = 0
 gPlayQueue = 0
-gDissolveBlend = 0
 
 
 def _rt():
@@ -60,6 +58,7 @@ def _set_cursor(name):
 def waitCursor(): _set_cursor('wait')
 def hidecursor(): _set_cursor('hidden')
 def SetHandCursor(): _set_cursor('hand')
+sethandCursor = SetHandCursor
 def setOpenhandCursor(): _set_cursor('hand')
 def SetGrabCursor(): _set_cursor('grab')
 def resetCursor(): _set_cursor('arrow')
@@ -75,13 +74,23 @@ def setCurScreen(s):
 
 def getCurScreen(): return gCurScreen
 def getCurGame(): return gScreenDaddy
+def loadGame(theGame): gGameDaddy.mGoToGame(theGame)
+
+
+def setCurrentGame(obj):
+    global gScreenDaddy
+    gScreenDaddy = obj
+    _rt().screen_daddy = obj
+
+
 def navigate(screen): gScreenDaddy.mNavigate(screen)
 def navigateBack(): gScreenDaddy.mNavigateBack()
 def getRegPoint(): return Point(320, 240)
 def getOffScreenLoc(): return Point(-1000, -1000)
 def getBlank(): return gBlank
-def getWordRectBlank(): return gWordRectBlank
 def getDragSprite(): return gDragSprite
+def getDragChan(): return gDragSprite
+def getArrowCursor(): return [8, 9]
 def disableGame(): gScreenDaddy.mDisable()
 def enableGame(): gScreenDaddy.mEnable()
 def disableScreen(): gCurScreen.mDisable()
@@ -89,14 +98,31 @@ def enableScreen(): gCurScreen.mEnable()
 def isPC(): return 1
 def isMac(): return 0
 def isLamePC(): return 0
+def isOSX(): return 0                     # the port always takes the Windows path
+gDisabledGamesList = 0                    # Lingo global: list of game names the player may not enter (void here)
+def checkCDROMInDrive(): return 1       # the port runs from the extracted game files; there is no disc to check
 def QuitKeyCheck(keycode, flag=0): return 0
 def getVersion(): return 1
 def getPV(pc, mac): return pc
 
 
+def changeGameCast(cast_id):
+    """ChangeCast(castID, 3): castLib 3 is the current game's cast (S, D or b -> Exports/S, D, B).
+    Returns 1 if it changed (Lingo: the cast file was swapped)."""
+    rt = _rt()
+    name = str(cast_id).upper()
+    if name == 'EXTERNAL':
+        return 0            # (Lingo swaps in an empty cast to free memory; the port keeps the images the stage still shows)
+    if os.path.isdir(os.path.join(rt.exports_root, name)):
+        if rt.current_game_cast != name:
+            rt.current_game_cast = name
+            return 1
+    return 0
+
+
 def changeRiddleCast(cast_id):
-    """ChangeCast(castID, 3): point castLib 3 at CASTS/<castID>.CXT. Returns 1 if it changed.
-    In the port: castLib 3 == Exports/<castID>."""
+    """ChangeCast(castID, 4): castLib 4 is the current room / riddle / sign-in cast (SIGNIN, S_AA, D_FI, ...).
+    Returns 1 if it changed."""
     rt = _rt()
     room = str(cast_id).upper()
     if room == 'EXTERNAL':
@@ -106,9 +132,6 @@ def changeRiddleCast(cast_id):
             rt.current_room = room
             return 1
     return 0
-
-
-changeGameCast = changeRiddleCast
 
 
 # ---- interrupt mode (mouseDownScript = "interruptHandler") -----------------------------------
@@ -271,8 +294,8 @@ def savegame():
     if gPlayer != '':
         if gGlobalSaveLoadObject:
             gGlobalSaveLoadObject.mSave()
-        if gScreenDaddy:
-            gScreenDaddy.mSave()
+        if gGameDaddy:
+            gGameDaddy.mSaveGames()
 
 
 def savegame_safe():
@@ -292,26 +315,42 @@ def addGameToken(t):
     return gScreenDaddy.mAddToken(t) if str(gScreenDaddy.mGetType()).upper() == 'GAME' else 0
 
 
-def riddlePlayed(): return gScreenDaddy.pRiddlePlayed
-def setRiddlePlayed(): gScreenDaddy.pRiddlePlayed = 1
+def riddlePlayed(): return gGameDaddy.pRiddlePlayed
+def setRiddlePlayed(): gGameDaddy.pRiddlePlayed = 1
 
 
-def getGlobalGameData(): return _rt().handlers['getGlobalGameData']
-
-
-def getGameData(version):
-    return _rt().handlers['getSpookyData_%s' % str(version).upper()]
+def _dup(v):
+    """Fresh copy of handler data (propLists / lists only): in Lingo every call to a data handler builds a new
+    literal, and objects keep and change pieces of it."""
+    if isinstance(v, dict):
+        return {k: _dup(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_dup(x) for x in v]
+    return v
 
 
 def getHandlerData(name):
-    return _rt().handlers.get(name)
+    return _dup(_rt().handlers.get(name))
+
+
+def getGameDaddy(): return getHandlerData('getGameDaddy')
+def getQuitDialogue(): return getHandlerData('getQuitDialogue')
+
+
+_GAME_HANDLERS = {'s': 'getSandCastle', 'b': 'getBlast', 'd': 'getDeep'}
+
+
+def getGameData(theGame, theVersion):
+    """General Handlers / Global (MovieScript 21): game #S/#b/#D + version #a/#b/#c -> data handler."""
+    base = _GAME_HANDLERS.get(str(theGame).lower())
+    if base is None:
+        return None
+    return getHandlerData('%s_%s' % (base, str(theVersion).upper()))
 
 
 def GlobalPlayDone(obj):
-    if str(obj.pName).lower() == 'primer':
-        runtime.destroy_object(obj)
-        _rt().blank_sprite(160)           # take the LOADING... splash down
-        gScreenDaddy.mShow()
+    """TIMER with no parent: nothing to notify (Fantasy's GameDaddy always sets pParent)."""
+    pass
 
 
 # ---- sprite / game helpers used by the screens ------------------------------------------------
@@ -350,28 +389,9 @@ def recyclePlayStack():
     gPlayQueue.pObjectList = []
 
 
-def getBlendDissolveObject(parent=None):
-    if isinstance(parent, runtime.LObject):
-        gDissolveBlend.pParent = parent
-    return gDissolveBlend
-
-
-def recycleBlendDissolve():
-    gDissolveBlend.pParent = 0
-    gDissolveBlend.pSpriteList = []
-
-
-class _PrimerParent:
-    def mPlayDone(self, o):
-        GlobalPlayDone(o)
-
-
 def quitDialogue():
-    name = str(gCurScreen.pName).upper()
-    ver = str(gScreenDaddy.pCurrentVersion).lower()
-    dlg = gCreditDialogue if (name == 'DOOR' or (name == 'MAIN' and ver != 'a')) else gQuitDialogue
-    dlg.mLoad()
-    dlg.mShow()
+    gQuitDialogue.mLoad()
+    gQuitDialogue.mShow()
 
 
 def doshutDown():
@@ -383,66 +403,58 @@ def doshutDown():
 
 # ---- INIT_MAIN -------------------------------------------------------------------------------
 def _saved_games_dir(project_root):
-    """Per-user save folder, under the same root the launcher uses: %LOCALAPPDATA%\\ISpySpookyMansionPort\\SAVED GAMES
-    (ISPY_PORT_HOME overrides the root; XDG data dir on non-Windows). Saves from the old in-project 'SAVED GAMES'
-    folder are copied over the first time (the old folder is left alone)."""
+    """Per-user save folder, under the same root the launcher uses: %LOCALAPPDATA%\\ISpyFantasyPort\\SAVED GAMES
+    (ISPY_PORT_HOME overrides the root; XDG data dir on non-Windows)."""
     root = os.environ.get('ISPY_PORT_HOME')
     if not root:
         if os.name == 'nt':
             base = os.environ.get('LOCALAPPDATA') or os.path.join(os.path.expanduser('~'), 'AppData', 'Local')
         else:
             base = os.environ.get('XDG_DATA_HOME') or os.path.join(os.path.expanduser('~'), '.local', 'share')
-        root = os.path.join(base, 'ISpySpookyMansionPort')
+        root = os.path.join(base, 'ISpyFantasyPort')
     new = os.path.join(root, 'SAVED GAMES')
-    old = os.path.join(project_root, 'SAVED GAMES')
-    if not os.path.isdir(new) and os.path.isdir(old):
-        try:
-            shutil.copytree(old, new)
-            print('[saves] copied existing saves from', old, 'to', new)
-        except OSError as e:
-            print('[saves] could not copy the old saves:', e)
     os.makedirs(new, exist_ok=True)
     return new
 
 
 def INIT_MAIN():
-    global gScreenDaddy, gSavedGameDir, gGlobalSaveLoadObject, gSaveLoadObject
-    global gQuitDialogue, gCreditDialogue, gDragSprite, gPlayQueue, gDissolveBlend
-    from . import core, ui, game, screens, screens2, riddles, rooms, video, hunts  # noqa: F401  (registers the parent scripts)
+    """MovieScript 23 INIT_MAIN, line for line (loadCursors / exitLock / the Mac-only paths are not needed)."""
+    global gGameDaddy, gScreenDaddy, gSavedGameDir, gGlobalSaveLoadObject, gSaveLoadObject, gLoadStart
+    global gQuitDialogue, gDragSprite, gPlayQueue, gBlank, gPlayer, gPlayerDir, gAmbientSound, gFlushSound
+    global gInterruptableObject
+    from . import core, ui, game, screens, screens2, riddles, rooms, video, hunts, master_screens  # noqa: F401  (registers the parent scripts)
+    from . import scavenger, fantasy_anims, fantasy_screens, fantasy_book  # noqa: F401  (Fantasy-only parent scripts)
     rt = _rt()
-    loadStart = rt.milliseconds()
+    gLoadStart = rt.milliseconds()
+    gBlank = 1
+    rt.clear_update()                     # gUpdateList = []
+    gInterruptableObject = 0
+    gPlayer = ''
+    gPlayerDir = ''
+    gAmbientSound = 0
     gSavedGameDir = _saved_games_dir(rt.project_root)
     print('[saves] saved games in', gSavedGameDir)
-    rt.clear_update()
-    # LOADING... splash (main-cast member 9, which the Score showed while the movie booted)
-    ls = rt.sprites[160]
-    ls.member, ls.loc, ls.ink = 9, Point(320, 240), 8
-    rt.draw()
-    for i in range(1, 31):
+    gPlayQueue = _new('PLAY_QUEUE')
+    initSimpleButtonPool()
+    del gSoundObjectPool[:], gExSoundObjectPool[:], gWiggleObjectPool[:]
+    gFlushSound = 132
+    for i in range(1, 22):
         gSoundObjectPool.append(_new('INTERNALSOUND', Sym(str(i))))
         gExSoundObjectPool.append(_new('EXTERNALSOUND', Sym(str(i)), 'AIFF'))
         gWiggleObjectPool.append(_new('ANIM_WIGGLE'))
-    for _ in range(20):
-        gSimpleButtPool.append(runtime.get_object({'pType': 'BUTT_SIMPLE', 'pName': Sym('POOL')}, [0]))
-    gPlayQueue = _new('PLAY_QUEUE')
-    gDissolveBlend = _new('DISSOLVE_BLEND')
     gGlobalSaveLoadObject = _new('SAVELOAD', '')
     gSaveLoadObject = gGlobalSaveLoadObject
-    alloc = get_range_list(1, 160)
+    alloc = get_range_list(1, 150)
     gDragSprite = pop_last(alloc)
-    credit_range = pop_last_range(alloc, 5)
-    gQuitDialogue = runtime.get_object(getHandlerData('getQuitDialogue'), list(credit_range))
-    gCreditDialogue = runtime.get_object(getHandlerData('getCreditQuitDialogue'), credit_range)
-    gScreenDaddy = runtime.get_object(getGlobalGameData(), alloc)
+    gQuitDialogue = runtime.get_object(getQuitDialogue(), pop_last_range(alloc, 5))
+    gGameDaddy = runtime.get_object(getGameDaddy(), alloc)
+    gScreenDaddy = gGameDaddy.mGetCurrentGame()
     rt.screen_daddy = gScreenDaddy
-    gScreenDaddy.mLoad()
-    # PC path of INIT_MAIN: hold the LOADING... splash for at least 3 s (the Mac-only getPrimerBumpData
-    # bump is an off-screen BH-logo animation that just primes a sound, so it is not used here)
-    if (rt.milliseconds() - loadStart) < 3000:
-        t = _new('TIMER')
-        t.pName = Sym('Primer')
-        t.mSetTimeOutLength(3000 - (rt.milliseconds() - loadStart))
-        t.mPlay()
-    else:
-        rt.blank_sprite(160)
-        gScreenDaddy.mShow()
+    gGameDaddy.mLoad()
+    gGameDaddy.mShow()
+
+
+def initSimpleButtonPool():
+    del gSimpleButtPool[:]
+    for _ in range(20):
+        gSimpleButtPool.append(runtime.get_object({'pType': 'BUTT_SIMPLE', 'pName': Sym('POOL')}, [0]))

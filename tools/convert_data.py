@@ -1,12 +1,12 @@
 """Convert the ripped Lingo data handlers + member tables into JSON the Python port loads.
 
-Usage (from ispy_port/):
-    python tools/convert_data.py --exports "..\\Exports" --out data
+Usage (from the repo root):
+    python tools/convert_data.py --exports "..\\F Exports" --out data
 
 Produces in <out>/:
     script_ids.json   {"131097": "GAME", ...}   (castLib<<16 | member -> script name, castLib 2 = BHP code cast)
-    handlers.json     {"getGlobalGameData": {...}, "getSpookyData_A": {...}, "getQuitDialogue": {...}, ...}
-    members_main.json {"<member number>": {"type":..., "name":..., "reg":[x,y]}}  (ISPYMAIN8 internal cast)
+    handlers.json     {"getGameDaddy": {...}, "getQuitDialogue": {...}, ...}   (every `get*` data handler in the movie scripts)
+    members_main.json {"<member number>": {"type":..., "name":..., "reg":[x,y]}}  (ISPYMAIN7 internal cast)
 """
 import argparse
 import csv
@@ -74,7 +74,7 @@ def main():
     for f in failures:
         print('FAILED', f)
 
-    main_members = read_members(os.path.join(a.exports, 'ISPYMAIN8', 'Members.csv'))
+    main_members = read_members(os.path.join(a.exports, 'ISPYMAIN7', 'Members.csv'))
     json.dump({str(k): v for k, v in main_members.items()}, open(os.path.join(a.out, 'members_main.json'), 'w'))
     print('main-cast members:', len(main_members))
 

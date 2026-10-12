@@ -1,10 +1,10 @@
-"""Extract the game's icon from spooky2.exe (the Director projector) for the window and for PyInstaller.
+"""Extract the game's icon (Fantasy.ico from the disc, or the first icon group of an .exe) for the window and PyInstaller.
 
-    python tools/extract_icon.py                      # looks for ..\\I SPY Spooky Mansion Deluxe\\spooky2.exe
-    python tools/extract_icon.py "D:\\path\\spooky2.exe"
+    python tools/extract_icon.py                      # looks for ..\\ispy_fantasy\\Fantasy.ico
+    python tools/extract_icon.py "D:\\Fantasy.ico"      # the disc's icon file (or a path to an .exe)
 
-Writes (all from the exe's first icon group, nothing is resized or redrawn):
-    packaging/icon.ico   every size in the exe's icon group; PyInstaller embeds it as the app's exe icon
+Writes (all from the icon's own images, nothing is resized or redrawn):
+    packaging/icon.ico   every size in the icon; PyInstaller embeds it as the app's exe icon
     packaging/icon.png   the largest image as PNG (Linux AppImage icon, macOS fallback)
     ispy/icon.png        the same PNG; the game loads it for the window / taskbar icon (build.py bundles it)
 Pure Python, standard library only.
@@ -17,9 +17,9 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
-from ispy.icon_data import _read_icon_entries         # noqa: E402  (PE resource walker, already used by the game)
+from ispy.icon_data import _read_icon_entries, read_ico_file   # noqa: E402  (PE resource walker / .ico reader)
 
-DEFAULT_EXE = os.path.join(os.path.dirname(ROOT), 'I SPY Spooky Mansion Deluxe', 'spooky2.exe')
+DEFAULT_ICON = os.path.join(os.path.dirname(ROOT), 'ispy_fantasy', 'Fantasy.ico')
 PNG_SIG = b'\x89PNG\r\n\x1a\n'
 
 
@@ -102,15 +102,15 @@ def write_ico(path, entries):
 
 
 def main():
-    exe = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_EXE
-    if not os.path.isfile(exe):
-        print('spooky2.exe not found: %s\nPass its path as an argument.' % exe)
+    src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ICON
+    if not os.path.isfile(src):
+        print('Icon file not found: %s\nPass the path to Fantasy.ico (or an .exe) as an argument.' % src)
         return 1
-    entries = _read_icon_entries(exe)
+    entries = read_ico_file(src) if src.lower().endswith('.ico') else _read_icon_entries(src)
     if not entries:
-        print('No icon group found in %s' % exe)
+        print('No icon images found in %s' % src)
         return 1
-    print('icon sizes in the exe:', ', '.join('%dx%d@%dbpp%s' % (w, h, bc, ' (PNG)' if d[:8] == PNG_SIG else '')
+    print('icon sizes found:', ', '.join('%dx%d@%dbpp%s' % (w, h, bc, ' (PNG)' if d[:8] == PNG_SIG else '')
                                                 for w, h, bc, d in entries))
 
     best = max(entries, key=lambda e: (e[0], e[2]))

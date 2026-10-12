@@ -7,17 +7,27 @@ from .runtime import LObject
 import re
 
 MISSING = {}    # script name -> set(method names called)
+_SEEN_CTOR = set()
+
+
+def _log(msg):
+    print(msg, flush=True)
 
 
 class MissingScript(LObject):
     def __init__(self, name):
         object.__setattr__(self, '_name', str(name))
         MISSING.setdefault(self._name, set())
+        if self._name not in _SEEN_CTOR:                 # live log: first time each unported script is built
+            _SEEN_CTOR.add(self._name)
+            _log('[unported] %s constructed' % self._name)
 
     def __getattr__(self, attr):
         if attr.startswith('__'):
             raise AttributeError(attr)
         if re.match(r'^m[A-Z]', attr):
+            if attr not in MISSING[self._name]:          # live log: first call of each method
+                _log('[unported] %s.%s() called' % (self._name, attr))
             MISSING[self._name].add(attr)
 
             def _noop(*a, **k):

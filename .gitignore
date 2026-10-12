@@ -1,10 +1,10 @@
 # ============================================================================================
-# I SPY Spooky Mansion Deluxe port -- keep everything that comes FROM the game out of the repo.
+# I SPY Fantasy port -- keep everything that comes FROM the game out of the repo.
 # The repo should hold only the port's own source code; players supply their own copy of the game
-# (the launcher rips it from their disc into %LOCALAPPDATA%\ISpySpookyMansionPort).
+# (the launcher rips it from their disc into %LOCALAPPDATA%\ISpyFantasyPort).
 # ============================================================================================
 
-# --- saves & per-user state (saves now live in %LOCALAPPDATA%\ISpySpookyMansionPort\SAVED GAMES) ---
+# --- saves & per-user state (saves live in %LOCALAPPDATA%\ISpyFantasyPort\SAVED GAMES) ---
 SAVED GAMES/
 *.LST
 *.VER
