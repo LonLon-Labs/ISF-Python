@@ -902,6 +902,12 @@ class RiddleDrag(LObject):
         self.pParent = theObject
 
     def mShow(self):
+        # The room background bitmap has the piece baked in; pBackMember is the same patch of the background
+        # *without* it. It is shown under the piece (and under the neutral patch) at all times, so blanking the
+        # piece on pickup reveals the empty spot instead of the original. (Lingo: unconditional, before the branch.)
+        if self.pBackSprite:
+            S(self.pBackSprite).member = self.pBackMember
+            S(self.pBackSprite).ink = 8
         if not self.pFound:
             S(self.pSprite).member = self.pMember
             S(self.pSprite).ink = 8
